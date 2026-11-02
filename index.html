@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Volantines</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #87c5ea; font-family: system-ui, sans-serif; }
@@ -29,6 +29,32 @@
     pointer-events: none; opacity: 0; transition: opacity 0.4s, transform 0.4s;
   }
   #windAlert.show { opacity: 1; transform: translate(-50%, 0); }
+  /* ---- Controles táctiles ---- */
+  html, body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #touch { display: none; }
+  body.touch #touch { display: block; }
+  body.touch #help { display: none; }
+  .tgroup {
+    position: fixed; bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+    display: flex; gap: 14px; align-items: flex-end;
+  }
+  .tgroup.left  { left:  calc(18px + env(safe-area-inset-left, 0px)); }
+  .tgroup.right { right: calc(18px + env(safe-area-inset-right, 0px)); }
+  #touch button {
+    width: 76px; height: 76px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.7); background: rgba(0,0,0,0.3);
+    color: #fff; font: 700 15px system-ui, sans-serif; line-height: 1.1;
+    touch-action: none; -webkit-tap-highlight-color: transparent; padding: 0;
+  }
+  #touch button.arrow { font-size: 30px; }
+  #touch button.big { width: 104px; height: 104px; font-size: 20px; background: rgba(217,65,43,0.55); }
+  #touch button.on { background: rgba(255,255,255,0.45); transform: scale(0.94); }
+  #touch #btnReset {
+    position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px;
+    width: 48px; height: 48px; font-size: 24px;
+  }
+  body.touch #hud { font-size: 12px; padding: 8px 10px; min-width: 0; }
+  body.touch #hud b { font-size: 15px; }
   #msg small { display: block; font-size: 16px; font-weight: 400; margin-top: 6px; }
 </style>
 </head>
@@ -41,6 +67,17 @@
   <span id="windType">Brisa</span> · cambia en <span id="windNext">10</span> s
 </div>
 <div id="windAlert"></div>
+<div id="touch">
+  <div class="tgroup left">
+    <button class="arrow" data-key="KeyA" aria-label="Izquierda">◀</button>
+    <button class="arrow" data-key="KeyD" aria-label="Derecha">▶</button>
+  </div>
+  <div class="tgroup right">
+    <button data-key="KeyS">Dar<br>hilo</button>
+    <button class="big" data-key="Space">Tirar</button>
+  </div>
+  <button id="btnReset" aria-label="Reiniciar">↻</button>
+</div>
 <div id="help">
   <b>ESPACIO / click</b> tirar &nbsp;·&nbsp; <b>A D / ← →</b> dirigir &nbsp;·&nbsp; <b>S / ↓</b> dar hilo &nbsp;·&nbsp; <b>R</b> reiniciar
 </div>
@@ -386,13 +423,38 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyR') { reset(); showMsg(''); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
-addEventListener('mousedown', () => mouseDown = true);
-addEventListener('mouseup', () => mouseDown = false);
-addEventListener('touchstart', () => mouseDown = true);
-addEventListener('touchend', () => mouseDown = false);
+// Click / toque sobre el escenario = tirar (cuenta los dedos para el multitáctil)
+const canvasPointers = new Set();
+const cv = renderer.domElement;
+cv.addEventListener('pointerdown', e => { canvasPointers.add(e.pointerId); mouseDown = true; });
+const canvasUp = e => { canvasPointers.delete(e.pointerId); mouseDown = canvasPointers.size > 0; };
+cv.addEventListener('pointerup', canvasUp);
+cv.addEventListener('pointercancel', canvasUp);
+cv.addEventListener('pointerleave', canvasUp);
 
-const msgEl = document.getElementById('msg');
-function showMsg(html) { msgEl.innerHTML = html; }
+// Botones táctiles: cada uno simula una tecla mientras se mantiene presionado
+const isTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+function enableTouchUI() {
+  document.body.classList.add('touch');
+  if (!started) showMsg('¡Tira para elevar el volantín!<small>Mantén el botón TIRAR</small>');
+}
+if (isTouch) enableTouchUI();
+addEventListener('touchstart', enableTouchUI, { once: true });
+
+document.querySelectorAll('#touch button[data-key]').forEach(btn => {
+  const code = btn.dataset.key;
+  const down = e => { e.preventDefault(); btn.setPointerCapture(e.pointerId); keys[code] = true; btn.classList.add('on'); };
+  const up = () => { keys[code] = false; btn.classList.remove('on'); };
+  btn.addEventListener('pointerdown', down);
+  btn.addEventListener('pointerup', up);
+  btn.addEventListener('pointercancel', up);
+  btn.addEventListener('lostpointercapture', up);
+});
+document.getElementById('btnReset').addEventListener('pointerdown', e => { e.preventDefault(); reset(); showMsg(''); });
+addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = false; canvasPointers.clear(); });
+
+function showMsg(html) { document.getElementById('msg').innerHTML = html; }
 
 // ---------- Viento ----------
 // Cada WIND_PERIOD segundos se elige un nuevo tipo de viento y se pasa a él suavemente.
