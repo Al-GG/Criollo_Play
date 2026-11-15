@@ -13,6 +13,8 @@ Todo el juego vive en `index.html`.
 - Física del volantín: arrastre + sustentación según el viento relativo; el hilo es una restricción de largo.
 - Viento cambia de tipo cada 10 s (`WIND_TYPES`) y es más fuerte en altura. Rayas blancas lo muestran.
 - Personaje articulado; el hilo sale de su mano derecha.
+- Jugador y rivales comparten la misma física (`createFlyer` / `stepFlyer`); rivales con IA (`aiThink`, lista `RIVALS`).
+- Comisión: si dos hilos se cruzan quedan enredados; tirar o dar hilo "serrucha" y daña el hilo del otro hasta cortarlo.
 
 ## Probar
 - PC: abrir `index.html` en el navegador (necesita internet por el CDN).

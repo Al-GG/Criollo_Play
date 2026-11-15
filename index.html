@@ -7,12 +7,19 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #87c5ea; font-family: system-ui, sans-serif; }
   canvas { display: block; }
+  [hidden] { display: none !important; }
   #hud {
     position: fixed; top: 12px; left: 12px; color: #fff;
     background: rgba(0,0,0,0.35); padding: 10px 14px; border-radius: 10px;
     font-size: 14px; line-height: 1.6; pointer-events: none; min-width: 170px;
   }
   #hud b { font-size: 18px; }
+  .bar {
+    display: inline-block; width: 90px; height: 8px; border-radius: 4px;
+    background: rgba(255,255,255,0.25); vertical-align: middle; overflow: hidden;
+  }
+  .bar i { display: block; height: 100%; width: 100%; background: #6be36b; transition: background 0.2s; }
+  .bar.big { width: 160px; height: 12px; border-radius: 6px; }
   #help {
     position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
     color: #fff; background: rgba(0,0,0,0.35); padding: 8px 14px; border-radius: 10px;
@@ -21,14 +28,25 @@
   #msg {
     position: fixed; top: 40%; left: 50%; transform: translate(-50%, -50%);
     color: #fff; font-size: 34px; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,0.5);
-    pointer-events: none; text-align: center;
+    pointer-events: none; text-align: center; width: 90%;
   }
-  #windAlert {
-    position: fixed; top: 18%; left: 50%; transform: translate(-50%, -10px);
-    color: #fff; font-size: 26px; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,0.5);
-    pointer-events: none; opacity: 0; transition: opacity 0.4s, transform 0.4s;
+  #msg small { display: block; font-size: 16px; font-weight: 400; margin-top: 6px; }
+  #windAlert, #toast {
+    position: fixed; left: 50%; transform: translate(-50%, -10px);
+    color: #fff; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    pointer-events: none; opacity: 0; transition: opacity 0.4s, transform 0.4s; white-space: nowrap;
   }
-  #windAlert.show { opacity: 1; transform: translate(-50%, 0); }
+  #windAlert { top: 18%; font-size: 26px; }
+  #toast { top: 25%; font-size: 22px; color: #ffe066; }
+  #windAlert.show, #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #duel {
+    position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%);
+    color: #fff; background: rgba(160,20,20,0.55); padding: 8px 14px; border-radius: 10px;
+    font-size: 14px; pointer-events: none; text-align: center; line-height: 1.5;
+  }
+  #duel .title { font-weight: 700; font-size: 16px; }
+  #duel .row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+  #duel small { opacity: 0.9; }
   /* ---- Controles táctiles ---- */
   html, body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   #touch { display: none; }
@@ -55,18 +73,26 @@
   }
   body.touch #hud { font-size: 12px; padding: 8px 10px; min-width: 0; }
   body.touch #hud b { font-size: 15px; }
-  #msg small { display: block; font-size: 16px; font-weight: 400; margin-top: 6px; }
+  body.touch #duel { top: auto; bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
 </style>
 </head>
 <body>
 <div id="hud">
   Altura: <b id="alt">0</b> m<br>
   Máxima: <span id="max">0</span> m<br>
-  Hilo: <span id="len">0</span> m<br>
+  Hilo: <span id="len">0</span> m &nbsp;<span class="bar"><i id="hpBar"></i></span><br>
   Viento: <span id="wind">0</span> km/h <span id="windArrow"></span><br>
-  <span id="windType">Brisa</span> · cambia en <span id="windNext">10</span> s
+  <span id="windType">Brisa</span> · cambia en <span id="windNext">10</span> s<br>
+  Comisiones: <b id="score">0</b> · Te cortaron: <span id="lost">0</span>
+</div>
+<div id="duel" hidden>
+  <div class="title">¡Enredado con <span id="duelName"></span>!</div>
+  <div class="row"><span>Tú</span><span class="bar big"><i id="duelMe"></i></span></div>
+  <div class="row"><span id="duelName2"></span><span class="bar big"><i id="duelThem"></i></span></div>
+  <small>¡Tira o da hilo para serruchar!</small>
 </div>
 <div id="windAlert"></div>
+<div id="toast"></div>
 <div id="touch">
   <div class="tgroup left">
     <button class="arrow" data-key="KeyA" aria-label="Izquierda">◀</button>
@@ -80,6 +106,7 @@
 </div>
 <div id="help">
   <b>ESPACIO / click</b> tirar &nbsp;·&nbsp; <b>A D / ← →</b> dirigir &nbsp;·&nbsp; <b>S / ↓</b> dar hilo &nbsp;·&nbsp; <b>R</b> reiniciar
+  <br>Cruza tu hilo con el de un rival y serrucha (tira o da hilo) para comisionarlo
 </div>
 <div id="msg">¡Tira para elevar el volantín!<small>Mantén ESPACIO o el click</small></div>
 
@@ -89,6 +116,15 @@
 
 <script type="module">
 import * as THREE from 'three';
+const V3 = THREE.Vector3;
+const clamp = THREE.MathUtils.clamp;
+
+// ---------- Rivales (controlados por la computadora) ----------
+const RIVALS = [
+  { name: 'el Pancho', at: [-14, 0, -2], shirt: 0x2e9b4f, cap: 0xffffff, kite: [0x2e9b4f, 0xffffff, 0x2e9b4f, 0xffffff], tail: [0xffffff, 0x2e9b4f], skill: 0.7, aggro: 0.5 },
+  { name: 'la Coni',   at: [14, 0, -4],  shirt: 0x7b3fb5, cap: 0xff8c1a, kite: [0xff8c1a, 0x7b3fb5, 0xff8c1a, 0x7b3fb5], tail: [0xff8c1a, 0x7b3fb5], skill: 0.85, aggro: 0.6 },
+  { name: 'el Tito',   at: [4, 0, -24],  shirt: 0x333333, cap: 0xffd500, kite: [0x111111, 0xffd500, 0x111111, 0xffd500], tail: [0xffd500, 0x111111], skill: 0.6, aggro: 0.45 },
+];
 
 // ---------- Escena ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -129,13 +165,14 @@ for (let i = 0; i < 14; i++) {
   scene.add(hill);
 }
 
-// Árboles
+// Árboles (lejos del jugador y de los rivales)
 const trunkMat = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
 const leafMat = new THREE.MeshLambertMaterial({ color: 0x2f7a32 });
 for (let i = 0; i < 40; i++) {
   const x = (Math.random() - 0.5) * 160;
   const z = -20 - Math.random() * 120;
   if (Math.abs(x) < 6 && z > -30) continue;
+  if (RIVALS.some(r => Math.hypot(x - r.at[0], z - r.at[2]) < 7)) continue;
   const tree = new THREE.Group();
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 2), trunkMat);
   trunk.position.y = 1;
@@ -165,16 +202,16 @@ for (let i = 0; i < 18; i++) {
   clouds.push(c);
 }
 
-// ---------- Jugador (con articulaciones) ----------
+// ---------- Personaje (con articulaciones) ----------
 // El modelo mira hacia -z (hacia el volantín). Cada articulación es un Group que se rota.
-function buildPlayer() {
+function buildCharacter(look = {}) {
   const mats = {
-    skin:  new THREE.MeshLambertMaterial({ color: 0xe9b98f }),
-    shirt: new THREE.MeshLambertMaterial({ color: 0xd9412b }),
-    pants: new THREE.MeshLambertMaterial({ color: 0x2f4f8a }),
+    skin:  new THREE.MeshLambertMaterial({ color: look.skin ?? 0xe9b98f }),
+    shirt: new THREE.MeshLambertMaterial({ color: look.shirt ?? 0xd9412b }),
+    pants: new THREE.MeshLambertMaterial({ color: look.pants ?? 0x2f4f8a }),
     shoe:  new THREE.MeshLambertMaterial({ color: 0x2a2a2a }),
-    hair:  new THREE.MeshLambertMaterial({ color: 0x3b2414 }),
-    cap:   new THREE.MeshLambertMaterial({ color: 0x1e5bd8 }),
+    hair:  new THREE.MeshLambertMaterial({ color: look.hair ?? 0x3b2414 }),
+    cap:   new THREE.MeshLambertMaterial({ color: look.cap ?? 0x1e5bd8 }),
     wood:  new THREE.MeshLambertMaterial({ color: 0xa0703c }),
     thread:new THREE.MeshLambertMaterial({ color: 0xf4f4f4 }),
   };
@@ -222,8 +259,7 @@ function buildPlayer() {
   const headG = new THREE.Group();
   headG.position.y = 0.6;
   torso.add(headG);
-  const neck = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.1, 8), mats.skin));
-  headG.add(neck);
+  headG.add(shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.1, 8), mats.skin)));
   const head = shadow(new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 12), mats.skin));
   head.position.y = 0.16;
   headG.add(head);
@@ -238,7 +274,7 @@ function buildPlayer() {
   visor.position.set(0, 0.22, -0.1);
   visor.rotation.x = 0.15;
   headG.add(visor);
-  const ears = [-1, 1].map(s => {
+  [-1, 1].forEach(s => {
     const e = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), mats.skin);
     e.position.set(s * 0.14, 0.15, 0.01);
     headG.add(e);
@@ -249,8 +285,7 @@ function buildPlayer() {
     const shoulder = new THREE.Group();
     shoulder.position.set(side * 0.25, 0.46, 0);
     torso.add(shoulder);
-    const sleeve = limb(0.3, 0.065, mats.shirt);
-    shoulder.add(sleeve);
+    shoulder.add(limb(0.3, 0.065, mats.shirt));
     const elbow = new THREE.Group();
     elbow.position.y = -0.3;
     elbow.add(limb(0.27, 0.05, mats.skin));
@@ -276,29 +311,28 @@ function buildPlayer() {
 
   return { root, hips, torso, headG, legL, legR, armL, armR, spool };
 }
-const rig = buildPlayer();
-const player = rig.root;
-scene.add(player);
 
-function animatePlayer(dt) {
-  const pull = pullIn, rel = releaseIn, st = steerVis, t = time;
+function animateRig(f, dt) {
+  const rig = f.rig;
+  const pull = f.pullIn, give = f.releaseIn, st = f.steerVis, t = time + f.phase;
   const breath = Math.sin(t * 2.2) * 0.015;
-  const tug = Math.sin(t * 10) * 0.1 * pull;           // tironcitos al tirar
+  const tug = Math.sin(t * 10) * 0.1 * pull;            // tironcitos al tirar
+  const hasString = f.state !== 'cut';
 
-  // Brazo derecho: sostiene el hilo
-  rig.armR.shoulder.rotation.x = 1.2 - 0.5 * pull + 0.25 * rel + tug + breath;
+  // Brazo derecho: sostiene el hilo (si se cortó, lo baja)
+  rig.armR.shoulder.rotation.x = hasString ? 1.2 - 0.5 * pull + 0.25 * give + tug + breath : 0.3;
   rig.armR.shoulder.rotation.z = -0.2 + st * 0.25;
-  rig.armR.elbow.rotation.x = 0.3 + 1.0 * pull;
+  rig.armR.elbow.rotation.x = hasString ? 0.3 + 1.0 * pull : 0.2;
   // Brazo izquierdo: carrete más abajo
-  rig.armL.shoulder.rotation.x = 0.75 - 0.2 * pull + 0.15 * rel - tug * 0.5;
+  rig.armL.shoulder.rotation.x = 0.75 - 0.2 * pull + 0.15 * give - tug * 0.5;
   rig.armL.shoulder.rotation.z = 0.25 + st * 0.2;
   rig.armL.elbow.rotation.x = 0.9 + 0.4 * pull;
-  rig.spool.rotation.x += (rel * 18 - pull * 12) * dt; // gira al dar o recoger hilo
+  rig.spool.rotation.x += (give * 18 - pull * 12) * dt;  // gira al dar o recoger hilo
 
   // Torso: se echa hacia atrás al tirar, se inclina al dirigir
-  rig.torso.rotation.x = 0.18 * pull - 0.05 * rel + breath;
+  rig.torso.rotation.x = 0.18 * pull - 0.05 * give + breath;
   rig.torso.rotation.z = -st * 0.12;
-  rig.headG.rotation.x = 0.35 + 0.1 * pull;           // mira hacia arriba al volantín
+  rig.headG.rotation.x = 0.35 + 0.1 * pull;            // mira hacia arriba al volantín
 
   // Piernas: postura abierta, rodillas flexionadas al tirar
   rig.hips.position.y = 0.9 - 0.07 * pull;
@@ -311,10 +345,9 @@ function animatePlayer(dt) {
 }
 
 // ---------- Volantín ----------
-function makeKite() {
+function makeKite(colors) {
   const g = new THREE.Group();
   const top = [0, 0.9, 0], right = [0.65, 0.1, 0], bottom = [0, -0.75, 0], left = [-0.65, 0.1, 0], c = [0, 0.1, 0];
-  const colors = [0xffd500, 0xe0262b, 0x1e5bd8, 0xffffff];
   const tris = [[top, right, c], [right, bottom, c], [bottom, left, c], [left, top, c]];
   tris.forEach((t, i) => {
     const geo = new THREE.BufferGeometry();
@@ -333,32 +366,71 @@ function makeKite() {
   g.add(v, h);
   return g;
 }
-const kite = makeKite();
-scene.add(kite);
 
-// Hilo
-const STRING_PTS = 24;
-const stringGeo = new THREE.BufferGeometry();
-stringGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(STRING_PTS * 3), 3));
-const stringLine = new THREE.Line(stringGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }));
-stringLine.frustumCulled = false;
-scene.add(stringLine);
-
-// Cola (cadena verlet)
-const TAIL_N = 14, TAIL_SEG = 0.35;
-const tail = [];
-for (let i = 0; i < TAIL_N; i++) tail.push({ p: new THREE.Vector3(), o: new THREE.Vector3() });
-const tailGeo = new THREE.BufferGeometry();
-tailGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(TAIL_N * 3), 3));
-const tailLine = new THREE.Line(tailGeo, new THREE.LineBasicMaterial({ color: 0xe0262b }));
-tailLine.frustumCulled = false;
-scene.add(tailLine);
-const bows = [];
+// ---------- Volantinero: personaje + volantín + hilo + cola ----------
+const STRING_PTS = 24, TAIL_N = 14, TAIL_SEG = 0.35;
 const bowGeo = new THREE.PlaneGeometry(0.28, 0.12);
-for (let i = 2; i < TAIL_N; i += 2) {
-  const b = new THREE.Mesh(bowGeo, new THREE.MeshBasicMaterial({ color: i % 4 ? 0xffd500 : 0x1e5bd8, side: THREE.DoubleSide }));
-  scene.add(b);
-  bows.push({ mesh: b, idx: i });
+
+function createFlyer(o) {
+  const rig = buildCharacter(o.look);
+  rig.root.position.set(...o.at);
+  scene.add(rig.root);
+
+  const kite = makeKite(o.kiteColors);
+  scene.add(kite);
+
+  const stringGeo = new THREE.BufferGeometry();
+  stringGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(STRING_PTS * 3), 3));
+  const stringLine = new THREE.Line(stringGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }));
+  stringLine.frustumCulled = false;
+  scene.add(stringLine);
+
+  const tail = [];
+  for (let i = 0; i < TAIL_N; i++) tail.push({ p: new V3(), o: new V3() });
+  const tailGeo = new THREE.BufferGeometry();
+  tailGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(TAIL_N * 3), 3));
+  const tailLine = new THREE.Line(tailGeo, new THREE.LineBasicMaterial({ color: o.tailColors[1] }));
+  tailLine.frustumCulled = false;
+  scene.add(tailLine);
+  const bows = [];
+  for (let i = 2; i < TAIL_N; i += 2) {
+    const b = new THREE.Mesh(bowGeo, new THREE.MeshBasicMaterial({ color: o.tailColors[(i / 2) % 2], side: THREE.DoubleSide }));
+    scene.add(b);
+    bows.push({ mesh: b, idx: i });
+  }
+
+  const f = {
+    name: o.name, isPlayer: !!o.isPlayer, skill: o.skill ?? 1, aggro: o.aggro ?? 0,
+    rig, kite, stringGeo, tail, tailGeo, bows,
+    pts: Array.from({ length: STRING_PTS }, () => new V3()),
+    anchor: new V3(o.at[0], 1.3, o.at[2] - 0.4),
+    pos: new V3(), vel: new V3(), wind: new V3(),
+    L: 10, maxAlt: 0, damage: 0, armed: false,
+    state: 'flying', timer: 0, spin: 0, phase: Math.random() * 10,
+    pullIn: 0, releaseIn: 0, steerIn: 0, steerVis: 0,
+    pullT: 0, releaseT: 0, steerT: 0,
+    // IA
+    mode: 'cruise', aiTimer: 3 + Math.random() * 4, sawPhase: Math.random() * 6,
+    home: new V3(o.at[0] * 0.8, 18 + Math.random() * 8, 0), homeL: 30,
+  };
+  resetFlyer(f);
+  return f;
+}
+
+function resetFlyer(f) {
+  const r = f.rig.root.position;
+  f.pos.set(r.x, 2.5, r.z - 9);
+  f.vel.set(0, 0, 0);
+  f.L = 10;
+  f.maxAlt = 0;
+  f.damage = 0;
+  f.state = 'flying';
+  f.timer = 0;
+  f.steerVis = 0;
+  f.armed = !f.isPlayer ? false : started;
+  f.kite.visible = true;
+  const bottom = f.pos.clone().add(new V3(0, -0.75, 0));
+  f.tail.forEach((t, i) => { t.p.copy(bottom).y -= i * TAIL_SEG * 0.5; t.o.copy(t.p); });
 }
 
 // ---------- Rayas de viento ----------
@@ -374,7 +446,7 @@ const streakLines = new THREE.LineSegments(streakGeo, new THREE.LineBasicMateria
 streakLines.frustumCulled = false;
 scene.add(streakLines);
 const streaks = [];
-for (let i = 0; i < STREAKS; i++) streaks.push({ p: new THREE.Vector3(), life: 0, max: 1 });
+for (let i = 0; i < STREAKS; i++) streaks.push({ p: new V3(), life: 0, max: 1 });
 
 function spawnStreak(s, center, first) {
   s.p.set(
@@ -387,32 +459,36 @@ function spawnStreak(s, center, first) {
 }
 let streaksInit = false;
 
-// ---------- Estado / física ----------
-const anchor = new THREE.Vector3(0, 1.4, 0);
-const pos = new THREE.Vector3();
-const vel = new THREE.Vector3();
-let L, maxAlt, crashed, crashTimer, started, steerVis;
-const wind = new THREE.Vector3();
-let time = 0;
+// Chispas donde se rozan los hilos
+const sparks = [];
+for (let i = 0; i < 6; i++) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffe066 }));
+  m.visible = false;
+  scene.add(m);
+  sparks.push(m);
+}
+
+// ---------- Estado ----------
+let started = false, time = 0, score = 0, lost = 0;
+const wind = new V3();   // viento a la altura del volantín del jugador (para HUD, nubes, rayas)
 
 const MASS = 0.3, K = 0.18, LIFT = 0.9, DRAG = 0.3, SIDE = 0.3;
 const REEL_IN = 4, REEL_OUT = 3, MIN_L = 3, MAX_L = 150;
 // Entradas suavizadas (suben/bajan gradualmente al mantener la tecla)
-let steerIn = 0, releaseIn = 0, pullIn = 0;
 const STEER_RAMP = 1.5, RELEASE_RAMP = 1.2, PULL_RAMP = 1.5;
+// Comisión
+const CONTACT_IN = 0.7, CONTACT_OUT = 2.0, SAW_RATE = 0.5, DAMAGE_HEAL = 0.03;
 
-function reset() {
-  pos.set(0, 2.5, -9);
-  vel.set(0, 0, 0);
-  L = 10;
-  maxAlt = 0;
-  crashed = false;
-  crashTimer = 0;
-  steerVis = 0;
-  const bottom = pos.clone().add(new THREE.Vector3(0, -0.75, 0));
-  tail.forEach((t, i) => { t.p.copy(bottom).y -= i * TAIL_SEG * 0.5; t.o.copy(t.p); });
-}
-reset();
+const player = createFlyer({
+  name: 'Tú', isPlayer: true, at: [0, 0, 0],
+  kiteColors: [0xffd500, 0xe0262b, 0x1e5bd8, 0xffffff], tailColors: [0xffd500, 0x1e5bd8],
+});
+const rivals = RIVALS.map(r => createFlyer({
+  name: r.name, at: r.at, skill: r.skill, aggro: r.aggro,
+  look: { shirt: r.shirt, cap: r.cap, pants: 0x3a3a48, hair: 0x1f140c },
+  kiteColors: r.kite, tailColors: r.tail,
+}));
+const flyers = [player, ...rivals];
 
 // ---------- Controles ----------
 const keys = {};
@@ -420,7 +496,7 @@ let mouseDown = false;
 addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();
-  if (e.code === 'KeyR') { reset(); showMsg(''); }
+  if (e.code === 'KeyR') { resetFlyer(player); showMsg(''); }
 });
 addEventListener('keyup', e => keys[e.code] = false);
 // Click / toque sobre el escenario = tirar (cuenta los dedos para el multitáctil)
@@ -450,11 +526,20 @@ document.querySelectorAll('#touch button[data-key]').forEach(btn => {
   btn.addEventListener('pointercancel', up);
   btn.addEventListener('lostpointercapture', up);
 });
-document.getElementById('btnReset').addEventListener('pointerdown', e => { e.preventDefault(); reset(); showMsg(''); });
+document.getElementById('btnReset').addEventListener('pointerdown', e => { e.preventDefault(); resetFlyer(player); showMsg(''); });
 addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = false; canvasPointers.clear(); });
 
 function showMsg(html) { document.getElementById('msg').innerHTML = html; }
+
+const toastEl = document.getElementById('toast');
+let toastTimer;
+function showToast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2500);
+}
 
 // ---------- Viento ----------
 // Cada WIND_PERIOD segundos se elige un nuevo tipo de viento y se pasa a él suavemente.
@@ -470,6 +555,7 @@ let windFrom = { speed: 5.5, side: 0, gust: 0.8, gustFreq: 0.8 };
 let windTo = { ...WIND_TYPES[1], side: 0 };
 let windName = 'Brisa', windChangeAt = WIND_PERIOD;
 const windCur = { ...windTo };
+const windBase = { side: 0, up: 0, fwd: 5 };
 
 function pickWind() {
   let type;
@@ -480,7 +566,8 @@ function pickWind() {
   showWindAlert(type.name, windTo.side);
 }
 
-function updateWind(t, y) {
+// Calcula el viento base del momento (sin altura)
+function updateWind(t) {
   if (t >= windChangeAt) { pickWind(); windChangeAt = t + WIND_PERIOD; }
   // Transición suave entre el viento anterior y el nuevo
   const s = THREE.MathUtils.smoothstep(t - (windChangeAt - WIND_PERIOD), 0, WIND_BLEND);
@@ -488,10 +575,13 @@ function updateWind(t, y) {
 
   const f = windCur.gustFreq;
   const gust = windCur.gust * (0.6 * Math.sin(t * 1.3 * f) + 0.3 * Math.sin(t * 2.9 * f + 1.3) + 0.25 * Math.sin(t * 5.1 * f + 4));
-  const altFactor = 1 + Math.max(0, y) / 45;
-  const forward = Math.max(0.5, windCur.speed + gust) * altFactor;
-  const side = windCur.side + 0.4 * Math.sin(t * 0.37) + gust * 0.3;
-  wind.set(side, 0.3 * Math.sin(t * 0.5), -forward);
+  windBase.fwd = Math.max(0.5, windCur.speed + gust);
+  windBase.side = windCur.side + 0.4 * Math.sin(t * 0.37) + gust * 0.3;
+  windBase.up = 0.3 * Math.sin(t * 0.5);
+}
+// Viento a una altura dada (más fuerte arriba)
+function windAt(y, out) {
+  return out.set(windBase.side, windBase.up, -windBase.fwd * (1 + Math.max(0, y) / 45));
 }
 
 const windAlertEl = document.getElementById('windAlert');
@@ -504,90 +594,224 @@ function showWindAlert(name, side) {
   windAlertTimer = setTimeout(() => windAlertEl.classList.remove('show'), 2200);
 }
 
-// ---------- Paso de física ----------
-const tmp = new THREE.Vector3(), rel = new THREE.Vector3(), right = new THREE.Vector3();
-function physics(dt) {
-  const pulling = keys.Space || mouseDown;
-  const releasing = keys.KeyS || keys.ArrowDown;
-  const steerTarget = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
-  steerIn += THREE.MathUtils.clamp(steerTarget - steerIn, -STEER_RAMP * dt, STEER_RAMP * dt);
-  releaseIn += THREE.MathUtils.clamp((releasing ? 1 : 0) - releaseIn, -RELEASE_RAMP * 2 * dt, RELEASE_RAMP * dt);
-  const steer = steerIn;
+// ---------- Física de un volantín ----------
+const tmp = new V3(), rel = new V3(), force = new V3();
+function stepFlyer(f, dt) {
+  // Rampa suave de las entradas
+  f.steerIn += clamp(f.steerT - f.steerIn, -STEER_RAMP * dt, STEER_RAMP * dt);
+  f.releaseIn += clamp(f.releaseT - f.releaseIn, -RELEASE_RAMP * 2 * dt, RELEASE_RAMP * dt);
+  f.pullIn += clamp(f.pullT - f.pullIn, -PULL_RAMP * 2 * dt, PULL_RAMP * dt);
+  f.steerVis += (f.steerIn - f.steerVis) * Math.min(1, dt * 5);
 
-  if (pulling && !started) { started = true; showMsg(''); }
-
-  updateWind(time, pos.y);
-
-  if (crashed) {
-    vel.multiplyScalar(0.9);
-    crashTimer -= dt;
-    if (crashTimer <= 0) { reset(); showMsg(''); }
+  if (f.state === 'crashed') {
+    f.timer -= dt;
+    if (f.timer <= 0) { resetFlyer(f); if (f.isPlayer) showMsg(''); }
     return;
   }
 
+  windAt(f.pos.y, f.wind);
+  const free = f.state === 'cut';   // hilo cortado: el volantín se va con el viento
+
   // Largo del hilo
   let reelSpeed = 0;
-  // Tirar: la fuerza sube gradualmente al mantener y baja rápido al soltar
-  pullIn += THREE.MathUtils.clamp((pulling ? 1 : 0) - pullIn, -PULL_RAMP * 2 * dt, PULL_RAMP * dt);
-  if (pullIn > 0.001 && L > MIN_L) {
-    reelSpeed = REEL_IN * pullIn * pullIn;   // curva suave al inicio
-    L = Math.max(MIN_L, L - reelSpeed * dt);
+  if (!free) {
+    if (f.pullIn > 0.001 && f.L > MIN_L) {
+      reelSpeed = REEL_IN * f.pullIn * f.pullIn;   // curva suave al inicio
+      f.L = Math.max(MIN_L, f.L - reelSpeed * dt);
+    }
+    if (f.releaseIn > 0) f.L = Math.min(MAX_L, f.L + REEL_OUT * f.releaseIn * dt);
   }
-  if (releaseIn > 0) L = Math.min(MAX_L, L + REEL_OUT * releaseIn * dt);
 
   // Fuerzas aerodinámicas
-  rel.subVectors(wind, vel);
-  const v2 = rel.lengthSq();
-  const q = K * v2;
-  tmp.subVectors(pos, anchor);
-  const d = tmp.length();
-  const elev = Math.asin(THREE.MathUtils.clamp(tmp.y / d, -1, 1));
-  const liftFactor = 0.4 + 0.8 * Math.cos(elev);
+  rel.subVectors(f.wind, f.vel);
+  const q = K * rel.lengthSq();
+  let liftFactor = 0.25;
+  if (!free) {
+    tmp.subVectors(f.pos, f.anchor);
+    const elev = Math.asin(clamp(tmp.y / (tmp.length() || 1), -1, 1));
+    liftFactor = 0.4 + 0.8 * Math.cos(elev);
+  }
+  force.set(0, 0, 0);
+  force.addScaledVector(rel.normalize(), DRAG * q);         // arrastre
+  force.y += LIFT * q * liftFactor;                         // sustentación
+  if (!free) force.x += f.steerIn * SIDE * q;               // dirección
+  force.y -= MASS * 9.8;                                    // gravedad
 
-  const force = new THREE.Vector3();
-  force.addScaledVector(rel.clone().normalize(), DRAG * q);   // arrastre
-  force.y += LIFT * q * liftFactor;                            // sustentación
-  right.set(1, 0, 0);
-  force.addScaledVector(right, steer * SIDE * q);              // dirección
-  force.y -= MASS * 9.8;                                       // gravedad
-
-  vel.addScaledVector(force, dt / MASS);
-  vel.multiplyScalar(0.995);
-  pos.addScaledVector(vel, dt);
+  f.vel.addScaledVector(force, dt / MASS);
+  f.vel.multiplyScalar(0.995);
+  f.pos.addScaledVector(f.vel, dt);
 
   // Restricción del hilo
-  tmp.subVectors(pos, anchor);
-  const dist = tmp.length();
-  if (dist > L) {
-    tmp.divideScalar(dist);
-    pos.copy(anchor).addScaledVector(tmp, L);
-    const radial = vel.dot(tmp);
-    if (radial > -reelSpeed) vel.addScaledVector(tmp, -radial - reelSpeed);
+  if (!free) {
+    tmp.subVectors(f.pos, f.anchor);
+    const dist = tmp.length();
+    if (dist > f.L) {
+      tmp.divideScalar(dist);
+      f.pos.copy(f.anchor).addScaledVector(tmp, f.L);
+      const radial = f.vel.dot(tmp);
+      if (radial > -reelSpeed) f.vel.addScaledVector(tmp, -radial - reelSpeed);
+    }
+  } else {
+    f.spin += dt * 3;
+    f.timer -= dt;
+    if (f.timer <= 0) { resetFlyer(f); if (f.isPlayer) showMsg(''); return; }
   }
 
-  steerVis += (steer - steerVis) * Math.min(1, dt * 5);
+  // Los rivales se "arman" (pueden chocar) una vez que despegan
+  if (!f.isPlayer && !f.armed && f.pos.y > 6) f.armed = true;
 
-  // Choque con el suelo
-  if (pos.y < 0.4 && started) {
-    pos.y = 0.4;
-    crashed = true;
-    crashTimer = 2.5;
-    showMsg(`¡Se cayó el volantín!<small>Máxima: ${maxAlt.toFixed(1)} m</small>`);
+  // Suelo
+  if (f.pos.y < 0.4) {
+    f.pos.y = 0.4;
+    if (free) { f.vel.set(0, 0, 0); }
+    else if (f.armed) {
+      f.state = 'crashed';
+      f.timer = f.isPlayer ? 2.5 : 4;
+      if (f.isPlayer) showMsg(`¡Se cayó el volantín!<small>Máxima: ${f.maxAlt.toFixed(1)} m</small>`);
+    } else f.vel.y = Math.max(0, f.vel.y);
   }
-  if (pos.y < 0.4) { pos.y = 0.4; vel.y = Math.max(0, vel.y); }
 
-  maxAlt = Math.max(maxAlt, pos.y);
+  f.maxAlt = Math.max(f.maxAlt, f.pos.y);
 }
 
-function tailPhysics(dt, attach) {
+// ---------- IA de los rivales ----------
+function aiThink(f, dt) {
+  f.pullT = f.releaseT = f.steerT = 0;
+  if (f.state !== 'flying') return;
+
+  // Cambia de plan cada cierto tiempo: pasear o ir a comisionar al jugador
+  f.aiTimer -= dt;
+  if (f.aiTimer <= 0) {
+    f.aiTimer = 7 + Math.random() * 8;
+    f.mode = Math.random() < f.aggro ? 'attack' : 'cruise';
+    const r = f.rig.root.position;
+    f.home.set(r.x * 0.8 + (Math.random() - 0.5) * 12, 14 + Math.random() * 16, 0);
+    f.homeL = 28 + Math.random() * 18;
+  }
+
+  const P = player;
+  // Solo ataca si el volantín del jugador vuela alto y estable (no persigue uno que se está cayendo)
+  const attacking = f.mode === 'attack' && started && P.state === 'flying' && P.pos.y > 10 && P.vel.y > -3;
+  let tx, ty, tL;
+  if (attacking) {
+    // Pasar el volantín por el otro lado del volantín del jugador, para cruzar los hilos
+    const side = Math.sign(f.rig.root.position.x - P.rig.root.position.x) || 1;
+    tx = P.pos.x - side * 4;
+    ty = Math.max(P.pos.y + 1, 10);   // nunca bajar demasiado persiguiendo
+    tL = Math.hypot(tx - f.anchor.x, ty - f.anchor.y, P.pos.z - f.anchor.z) * 1.05;
+  } else {
+    tx = f.home.x; ty = f.home.y; tL = f.homeL ?? 30;
+  }
+
+  const dy = ty - f.pos.y;
+  if (engagedWith(f)) {
+    // Serruchar: alterna tirones y dar hilo según su habilidad
+    const w = Math.sin(time * 3 + f.sawPhase);
+    if (w > -0.2) f.pullT = f.skill; else f.releaseT = f.skill * 0.8;
+  } else if (f.pos.y < 6 || f.vel.y < -2.5 || dy > 4) {
+    f.pullT = 1;
+  } else if (dy > 1.5) {
+    f.pullT = 0.6;
+  } else if (f.L < tL - 2 || dy < -3) {
+    f.releaseT = 1;
+  }
+  // Dirigir con un control proporcional suave
+  f.steerT = clamp((tx - f.pos.x) * 0.12 - f.vel.x * 0.25, -1, 1);
+  // Si está muy bajo, prioriza subir derecho
+  if (f.pos.y < 6) f.steerT *= 0.3;
+}
+
+// ---------- Comisión: contacto entre hilos ----------
+const _d1 = new V3(), _d2 = new V3(), _r = new V3(), _c1 = new V3(), _c2 = new V3(), _mid = new V3();
+// Distancia mínima entre dos segmentos 3D (deja el punto medio del contacto en _mid)
+function segDist(p1, q1, p2, q2) {
+  _d1.subVectors(q1, p1); _d2.subVectors(q2, p2); _r.subVectors(p1, p2);
+  const a = _d1.dot(_d1), e = _d2.dot(_d2), ff = _d2.dot(_r);
+  const c = _d1.dot(_r), b = _d1.dot(_d2), denom = a * e - b * b;
+  let s = denom > 1e-9 ? clamp((b * ff - c * e) / denom, 0, 1) : 0;
+  let t = (b * s + ff) / e;
+  if (t < 0) { t = 0; s = clamp(-c / a, 0, 1); }
+  else if (t > 1) { t = 1; s = clamp((b - c) / a, 0, 1); }
+  _c1.copy(p1).addScaledVector(_d1, s);
+  _c2.copy(p2).addScaledVector(_d2, t);
+  _mid.addVectors(_c1, _c2).multiplyScalar(0.5);
+  return _c1.distanceTo(_c2);
+}
+const SEG_IDX = [0, 3, 6, 9, 12, 15, 18, 21, 23];
+function stringDist(A, B, outPoint) {
+  let best = Infinity;
+  for (let i = 0; i < SEG_IDX.length - 1; i++) {
+    for (let j = 0; j < SEG_IDX.length - 1; j++) {
+      const d = segDist(A.pts[SEG_IDX[i]], A.pts[SEG_IDX[i + 1]], B.pts[SEG_IDX[j]], B.pts[SEG_IDX[j + 1]]);
+      if (d < best) { best = d; outPoint.copy(_mid); }
+    }
+  }
+  return best;
+}
+
+const engaged = new Map();   // "i-j" -> punto de contacto
+function engagedWith(f) {
+  const i = flyers.indexOf(f);
+  for (const key of engaged.keys()) {
+    const [a, b] = key.split('-').map(Number);
+    if (a === i || b === i) return flyers[a === i ? b : a];
+  }
+  return null;
+}
+// Fuerza de serrucho: tirar o dar hilo rápido roza más el hilo del otro
+const sawPower = f => 0.2 + 1.3 * f.pullIn + 0.8 * f.releaseIn;
+
+function cutFlyer(victim, by) {
+  victim.state = 'cut';
+  victim.timer = victim.isPlayer ? 5 : 8;
+  for (const key of [...engaged.keys()]) {
+    const [a, b] = key.split('-').map(Number);
+    if (flyers[a] === victim || flyers[b] === victim) engaged.delete(key);
+  }
+  if (by.isPlayer) {
+    score++;
+    showToast(`¡Comisionaste a ${victim.name}! ✂️`);
+  } else if (victim.isPlayer) {
+    lost++;
+    showMsg(`¡Te comisionó ${by.name}!<small>Tu volantín se fue con el viento...</small>`);
+  } else {
+    showToast(`${by.name} comisionó a ${victim.name}`);
+  }
+}
+
+const contactPt = new V3();
+function updateCombat(dt) {
+  for (const f of flyers) if (!engagedWith(f)) f.damage = Math.max(0, f.damage - DAMAGE_HEAL * dt);
+
+  for (let i = 0; i < flyers.length; i++) {
+    for (let j = i + 1; j < flyers.length; j++) {
+      const A = flyers[i], B = flyers[j], key = `${i}-${j}`;
+      if (A.state !== 'flying' || B.state !== 'flying' || !A.armed || !B.armed) { engaged.delete(key); continue; }
+      const d = stringDist(A, B, contactPt);
+      const was = engaged.has(key);
+      // Histéresis: cuesta engancharse, pero una vez enredados siguen rozando
+      if (d < CONTACT_IN || (was && d < CONTACT_OUT)) engaged.set(key, contactPt.clone());
+      else { engaged.delete(key); continue; }
+
+      A.damage += sawPower(B) * SAW_RATE * dt;
+      B.damage += sawPower(A) * SAW_RATE * dt;
+      if (A.damage >= 1 && A.damage >= B.damage) cutFlyer(A, B);
+      else if (B.damage >= 1) cutFlyer(B, A);
+    }
+  }
+}
+
+function tailPhysics(f, dt, attach) {
+  const tail = f.tail;
   tail[0].p.copy(attach);
-  const g = new THREE.Vector3(0, -3, 0);
   for (let i = 1; i < TAIL_N; i++) {
     const t = tail[i];
     const v = tmp.subVectors(t.p, t.o).multiplyScalar(0.96);
     t.o.copy(t.p);
-    const acc = g.clone().addScaledVector(wind, 0.9);
-    t.p.add(v).addScaledVector(acc, dt * dt);
+    t.p.add(v);
+    t.p.x += f.wind.x * 0.9 * dt * dt;
+    t.p.y += (-3 + f.wind.y * 0.9) * dt * dt;
+    t.p.z += f.wind.z * 0.9 * dt * dt;
   }
   for (let it = 0; it < 4; it++) {
     for (let i = 1; i < TAIL_N; i++) {
@@ -599,58 +823,91 @@ function tailPhysics(dt, attach) {
   }
 }
 
-// ---------- Render ----------
-const camTarget = new THREE.Vector3(0, 5, -10);
-const camPos = new THREE.Vector3(0, 3, 7);
-const up = new THREE.Vector3(0, 1, 0);
+// Puntos del hilo (con comba); si está cortado, cuelga del volantín
+function computeString(f) {
+  if (f.state === 'cut') {
+    const wn = tmp.copy(f.wind).normalize();
+    for (let i = 0; i < STRING_PTS; i++) {
+      const s = i / (STRING_PTS - 1);
+      f.pts[i].copy(f.pos).addScaledVector(wn, s * 2.5);
+      f.pts[i].y -= s * 6;
+      f.pts[i].x += Math.sin(time * 4 + s * 6) * 0.15 * s;
+    }
+    return;
+  }
+  const dist = f.pos.distanceTo(f.anchor);
+  const sag = 0.02 * dist + Math.max(0, f.L - dist) * 0.5;
+  for (let i = 0; i < STRING_PTS; i++) {
+    const s = i / (STRING_PTS - 1);
+    f.pts[i].lerpVectors(f.anchor, f.pos, s);
+    f.pts[i].y -= Math.sin(Math.PI * s) * sag;
+  }
+}
 
-function updateVisuals(dt) {
-  // Orientación del volantín: mira al jugador, con giro según dirección
-  kite.position.copy(pos);
-  kite.up.copy(up);
-  kite.lookAt(anchor);
-  kite.rotateX(-0.35);
-  kite.rotateZ(-steerVis * 0.6 + Math.sin(time * 6) * 0.04);
+// ---------- Render ----------
+const camTarget = new V3(0, 5, -10);
+const camPos = new V3(0, 3, 7);
+const up = new V3(0, 1, 0);
+
+function updateFlyerVisuals(f, dt) {
+  // Personaje mira hacia su volantín
+  const r = f.rig.root;
+  const targetYaw = Math.atan2(-(f.pos.x - r.position.x), -(f.pos.z - r.position.z));
+  let dYaw = targetYaw - r.rotation.y;
+  dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw));
+  r.rotation.y += dYaw * Math.min(1, dt * 4);
+  animateRig(f, dt);
+  // El hilo sale de la mano derecha
+  r.updateMatrixWorld(true);
+  f.rig.armR.hand.getWorldPosition(f.anchor);
+
+  // Volantín: mira a su dueño, con giro según dirección (o da vueltas si está cortado)
+  const k = f.kite;
+  k.position.copy(f.pos);
+  k.up.copy(up);
+  if (f.state === 'cut') {
+    k.lookAt(tmp.copy(f.pos).sub(f.wind));
+    k.rotateZ(f.spin);
+    k.rotateX(Math.sin(f.spin * 0.7) * 0.8);
+  } else {
+    k.lookAt(f.anchor);
+    k.rotateX(-0.35);
+    k.rotateZ(-f.steerVis * 0.6 + Math.sin(time * 6 + f.phase) * 0.04);
+  }
 
   // Cola
-  kite.updateMatrixWorld();
-  const attach = new THREE.Vector3(0, -0.75, 0).applyMatrix4(kite.matrixWorld);
-  tailPhysics(dt, attach);
-  const tp = tailGeo.attributes.position;
-  tail.forEach((t, i) => tp.setXYZ(i, t.p.x, t.p.y, t.p.z));
+  k.updateMatrixWorld();
+  const attach = new V3(0, -0.75, 0).applyMatrix4(k.matrixWorld);
+  tailPhysics(f, dt, attach);
+  const tp = f.tailGeo.attributes.position;
+  f.tail.forEach((t, i) => tp.setXYZ(i, t.p.x, t.p.y, t.p.z));
   tp.needsUpdate = true;
-  bows.forEach(b => {
-    b.mesh.position.copy(tail[b.idx].p);
+  f.bows.forEach(b => {
+    b.mesh.position.copy(f.tail[b.idx].p);
     b.mesh.lookAt(camera.position);
   });
 
-  // Hilo con comba
-  const sp = stringGeo.attributes.position;
-  const dist = pos.distanceTo(anchor);
-  const slack = Math.max(0, L - dist);
-  const sag = 0.02 * dist + slack * 0.5;
-  for (let i = 0; i < STRING_PTS; i++) {
-    const s = i / (STRING_PTS - 1);
-    tmp.lerpVectors(anchor, pos, s);
-    tmp.y -= Math.sin(Math.PI * s) * sag;
-    sp.setXYZ(i, tmp.x, tmp.y, tmp.z);
-  }
+  // Hilo
+  computeString(f);
+  const sp = f.stringGeo.attributes.position;
+  f.pts.forEach((p, i) => sp.setXYZ(i, p.x, p.y, p.z));
   sp.needsUpdate = true;
+}
 
-  // Jugador mira hacia el volantín
-  const targetYaw = Math.atan2(-pos.x, -pos.z);
-  let dYaw = targetYaw - player.rotation.y;
-  dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw));
-  player.rotation.y += dYaw * Math.min(1, dt * 4);
-  animatePlayer(dt);
-  // El hilo sale de la mano derecha
-  player.updateMatrixWorld(true);
-  rig.armR.hand.getWorldPosition(anchor);
+const el = id => document.getElementById(id);
+function setBar(bar, value) {
+  bar.style.width = (clamp(value, 0, 1) * 100).toFixed(0) + '%';
+  bar.style.background = value > 0.6 ? '#6be36b' : value > 0.3 ? '#ffd23f' : '#ff5a4f';
+}
+
+function updateVisuals(dt) {
+  flyers.forEach(f => updateFlyerVisuals(f, dt));
+  const pos = player.pos;
 
   // Cámara
-  const desiredPos = new THREE.Vector3(pos.x * 0.15, 2.5 + pos.y * 0.08, 8 + L * 0.08);
+  const desiredPos = new V3(pos.x * 0.15, 2.5 + pos.y * 0.08, 8 + player.L * 0.08);
   camPos.lerp(desiredPos, Math.min(1, dt * 2));
-  const desiredTarget = new THREE.Vector3().lerpVectors(anchor, pos, 0.7);
+  const desiredTarget = new V3().lerpVectors(player.anchor, pos, 0.7);
   camTarget.lerp(desiredTarget, Math.min(1, dt * 3));
   camera.position.copy(camPos);
   camera.lookAt(camTarget);
@@ -662,11 +919,21 @@ function updateVisuals(dt) {
     if (c.position.z < -260) c.position.z = -40;
   });
 
+  // Chispas en los puntos de contacto
+  let si = 0;
+  for (const p of engaged.values()) {
+    if (si >= sparks.length) break;
+    const s = sparks[si++];
+    s.visible = true;
+    s.position.copy(p);
+    s.scale.setScalar(0.6 + Math.random() * 0.9);
+  }
+  for (; si < sparks.length; si++) sparks[si].visible = false;
+
   // Rayas de viento: se mueven con el viento, más largas y visibles si sopla fuerte
   if (!streaksInit) { streaks.forEach(s => spawnStreak(s, camTarget, true)); streaksInit = true; }
   const kiteAltF = 1 + Math.max(0, pos.y) / 45;
-  const windSpeed = wind.length();
-  const strength = THREE.MathUtils.clamp((windSpeed - 2) / 10, 0.15, 1);
+  const strength = clamp((wind.length() - 2) / 10, 0.15, 1);
   streaks.forEach((s, i) => {
     s.life += dt;
     // viento a la altura de la raya (más fuerte arriba)
@@ -675,38 +942,65 @@ function updateVisuals(dt) {
     s.p.x += vx * dt * 1.6; s.p.y += vy * dt * 1.6; s.p.z += vz * dt * 1.6;
     if (s.life > s.max || s.p.distanceTo(camTarget) > 55) spawnStreak(s, camTarget, false);
 
-    const len = 0.35 * Math.hypot(vx, vy, vz) * (0.6 + strength);
-    const inv = 1 / (Math.hypot(vx, vy, vz) || 1);
+    const sp = Math.hypot(vx, vy, vz) || 1;
+    const len = 0.35 * sp * (0.6 + strength);
     const k = i * 6;
     streakPos[k] = s.p.x; streakPos[k + 1] = s.p.y; streakPos[k + 2] = s.p.z;
-    streakPos[k + 3] = s.p.x - vx * inv * len;
-    streakPos[k + 4] = s.p.y - vy * inv * len;
-    streakPos[k + 5] = s.p.z - vz * inv * len;
+    streakPos[k + 3] = s.p.x - vx / sp * len;
+    streakPos[k + 4] = s.p.y - vy / sp * len;
+    streakPos[k + 5] = s.p.z - vz / sp * len;
     const fade = Math.sin(Math.PI * Math.min(1, s.life / s.max));
-    const a = fade * (0.25 + 0.55 * strength);
-    const c = i * 8;
-    streakCol.set([1, 1, 1, a, 1, 1, 1, 0], c);
+    streakCol.set([1, 1, 1, fade * (0.25 + 0.55 * strength), 1, 1, 1, 0], i * 8);
   });
   streakGeo.attributes.position.needsUpdate = true;
   streakGeo.attributes.color.needsUpdate = true;
 
   // HUD
-  document.getElementById('alt').textContent = pos.y.toFixed(1);
-  document.getElementById('max').textContent = maxAlt.toFixed(1);
-  document.getElementById('len').textContent = L.toFixed(0);
-  document.getElementById('wind').textContent = (wind.length() * 3.6).toFixed(0);
-  document.getElementById('windArrow').textContent = wind.x > 1 ? '→' : wind.x < -1 ? '←' : '↑';
-  document.getElementById('windType').textContent = windName;
-  document.getElementById('windNext').textContent = Math.max(0, Math.ceil(windChangeAt - time));
+  el('alt').textContent = pos.y.toFixed(1);
+  el('max').textContent = player.maxAlt.toFixed(1);
+  el('len').textContent = player.L.toFixed(0);
+  setBar(el('hpBar'), 1 - player.damage);
+  el('wind').textContent = (wind.length() * 3.6).toFixed(0);
+  el('windArrow').textContent = wind.x > 1 ? '→' : wind.x < -1 ? '←' : '↑';
+  el('windType').textContent = windName;
+  el('windNext').textContent = Math.max(0, Math.ceil(windChangeAt - time));
+  el('score').textContent = score;
+  el('lost').textContent = lost;
+
+  // Panel de duelo cuando el jugador está enredado
+  const foe = engagedWith(player);
+  el('duel').hidden = !foe;
+  if (foe) {
+    el('duelName').textContent = el('duelName2').textContent = foe.name;
+    setBar(el('duelMe'), 1 - player.damage);
+    setBar(el('duelThem'), 1 - foe.damage);
+  }
 }
 
-started = false;
 const clock = new THREE.Clock();
 function loop() {
   const frame = Math.min(clock.getDelta(), 0.05);
+
+  // Entradas del jugador
+  const pulling = keys.Space || mouseDown;
+  if (pulling && !started) { started = true; player.armed = true; showMsg(''); }
+  player.pullT = pulling && player.state === 'flying' ? 1 : 0;
+  player.releaseT = (keys.KeyS || keys.ArrowDown) && player.state === 'flying' ? 1 : 0;
+  player.steerT = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+  if (player.state !== 'flying') player.steerT = 0;
+
+  rivals.forEach(r => aiThink(r, frame));
+
   const steps = 4;
-  for (let i = 0; i < steps; i++) { time += frame / steps; physics(frame / steps); }
+  for (let i = 0; i < steps; i++) {
+    time += frame / steps;
+    updateWind(time);
+    flyers.forEach(f => stepFlyer(f, frame / steps));
+  }
+  windAt(player.pos.y, wind);
+
   updateVisuals(frame);
+  updateCombat(frame);
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
