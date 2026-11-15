@@ -14,6 +14,7 @@ Todo el juego vive en `index.html`.
 - Viento cambia de tipo cada 10 s (`WIND_TYPES`) y es más fuerte en altura. Rayas blancas lo muestran.
 - Personaje articulado; el hilo sale de su mano derecha.
 - Jugador y rivales comparten la misma física (`createFlyer` / `stepFlyer`); rivales con IA (`aiThink`, lista `RIVALS`).
+- Rivales: primero suben a 30-40 m y luego juegan según su personalidad (`STYLES`: rápido, pícaro, defensivo). Solo uno sale a atacar a la vez.
 - Comisión: si dos hilos se cruzan quedan enredados; tirar o dar hilo "serrucha" y daña el hilo del otro hasta cortarlo.
 
 ## Probar
