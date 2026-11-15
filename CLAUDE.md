@@ -13,6 +13,7 @@ Todo el juego vive en `index.html`.
 - Física del volantín: arrastre + sustentación según el viento relativo; el hilo es una restricción de largo.
 - Viento cambia de tipo cada 10 s (`WIND_TYPES`) y es más fuerte en altura. Rayas blancas lo muestran.
 - Personaje articulado; el hilo sale de su mano derecha.
+- Ambiente: hora del día al azar (`TIMES`: mañana, mediodía, atardecer; `?hora=atardecer` la fuerza), banderas chilenas de Fiestas Patrias flameando con el viento (solo hacia adelante), bandadas de pájaros, y un barco en el horizonte en escenarios con mar.
 - Escenarios (`BIOMES`): campo, bosque, desierto, playa, ciudad, cerros. Uno al azar por partida (sin repetir el anterior); `?escenario=playa` lo fuerza y la tecla E cambia. El área de juego (radio ~35 m alrededor de z=-15) siempre queda plana.
 - Jugador y rivales comparten la misma física (`createFlyer` / `stepFlyer`); rivales con IA (`aiThink`). En cada partida salen 3 o 4 rivales al azar de `RIVAL_POOL`, en posiciones al azar cercanas (`RIVAL_SPOT`, separados al menos 4,5 m).
 - Rivales: primero suben a 30-40 m y luego juegan según su personalidad (`STYLES`: rápido, pícaro, defensivo). Siempre elevan los 3; al azar 1 o 2 (máx. `MAX_ATTACKERS`) van a tu altura a atacarte.
