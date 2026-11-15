@@ -78,6 +78,34 @@
   body.touch #hud { font-size: 12px; padding: 8px 10px; min-width: 0; }
   body.touch #hud b { font-size: 15px; }
   body.touch #duel { top: auto; bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
+  #touch #btnKite {
+    position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: 124px;
+    width: 48px; height: 48px; font-size: 22px;
+  }
+  /* ---- Selector de volantín ---- */
+  #picker {
+    position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    background: rgba(10, 30, 50, 0.55); padding: 16px; overflow-y: auto;
+  }
+  #picker h2 { margin: 0; color: #fff; font-size: 26px; text-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+  #picker > small { color: #fff; opacity: 0.85; text-align: center; }
+  #cards { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; max-width: 820px; }
+  .card {
+    width: 180px; max-width: calc(50vw - 28px); background: rgba(255,255,255,0.95); color: #222;
+    border-radius: 14px; padding: 12px; cursor: pointer; border: 3px solid transparent;
+    text-align: center; box-shadow: 0 4px 14px rgba(0,0,0,0.25); font: 13px system-ui, sans-serif;
+    transition: transform 0.12s;
+  }
+  .card:hover { transform: translateY(-3px); }
+  .card.sel { border-color: #e0262b; }
+  .card svg { width: 64px; height: 64px; }
+  .card h3 { margin: 4px 0 2px; font-size: 18px; }
+  .card p { margin: 0 0 8px; min-height: 3.2em; line-height: 1.3; color: #444; }
+  .card .stat { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; }
+  .card .pips { letter-spacing: 1px; color: #e0262b; }
+  .card .key { display: inline-block; margin-top: 6px; font-size: 11px; color: #888; }
+  body.touch .card .key { display: none; }
 </style>
 </head>
 <body>
@@ -110,9 +138,15 @@
   </div>
   <button id="btnReset" aria-label="Reiniciar">↻</button>
   <button id="btnScene" aria-label="Cambiar escenario">🗺</button>
+  <button id="btnKite" aria-label="Cambiar volantín">🪁</button>
+</div>
+<div id="picker" hidden>
+  <h2>Elige tu volantín</h2>
+  <div id="cards"></div>
+  <small>Puedes cambiarlo después con la tecla V (o el botón 🪁)</small>
 </div>
 <div id="help">
-  <b>ESPACIO / click</b> tirar &nbsp;·&nbsp; <b>A D / ← →</b> dirigir &nbsp;·&nbsp; <b>S / ↓</b> dar hilo &nbsp;·&nbsp; <b>R</b> reiniciar &nbsp;·&nbsp; <b>E</b> cambiar escenario
+  <b>ESPACIO / click</b> tirar &nbsp;·&nbsp; <b>A D / ← →</b> dirigir &nbsp;·&nbsp; <b>S / ↓</b> dar hilo &nbsp;·&nbsp; <b>R</b> reiniciar &nbsp;·&nbsp; <b>E</b> cambiar escenario &nbsp;·&nbsp; <b>V</b> cambiar volantín
   <br>Cruza tu hilo con el de un rival y serrucha (tira o da hilo) para comisionarlo
 </div>
 <div id="msg">¡Tira para elevar el volantín!<small>Mantén ESPACIO o el click</small></div>
@@ -779,60 +813,176 @@ function animateRig(f, dt) {
   rig.legR.hip.rotation.z = 0.06;
 }
 
-// ---------- Volantín ----------
-function makeKite(colors) {
+// ---------- Tipos de volantín ----------
+// Cada tipo cambia la física (peso, cuánto lo empuja el aire, agilidad), su hilo y su forma.
+//  mass masa · k cuánto lo empuja el aire · lift sustentación · drag arrastre · side agilidad al dirigir
+//  toughness resistencia del hilo · saw fuerza para serruchar · tail largo de la cola (0 = sin cola)
+//  wobble inestabilidad (se mueve solo de lado a lado) · rollPush cuánto lo corren los giros de rueda
+const KITE_TYPES = {
+  necla: {
+    name: 'Ñecla', desc: 'Chica, rápida y ágil, pero su hilo es frágil.',
+    size: 0.75, shape: 'diamond', rhombus: { top: 1.05, side: 0.42, mid: 0.3, bottom: -0.8 }, twoTone: true, mass: 0.2, k: 0.13, lift: 0.95, drag: 0.3, side: 0.5,
+    toughness: 0.7, saw: 1.25, tail: 8, wobble: 0, rollPush: 1,
+    stats: { Subida: 3, Agilidad: 5, Resistencia: 2, Corte: 4 },
+  },
+  clasico: {
+    name: 'Volantín', desc: 'El de siempre: parejo en todo.',
+    size: 1, shape: 'diamond', mass: 0.3, k: 0.18, lift: 0.9, drag: 0.3, side: 0.3,
+    toughness: 1, saw: 1, tail: 14, wobble: 0, rollPush: 1,
+    stats: { Subida: 3, Agilidad: 3, Resistencia: 3, Corte: 3 },
+  },
+  chonchon: {
+    name: 'Chonchón', desc: 'Hexagonal, estable y fácil de subir, pero lento para comisionar.',
+    size: 1.2, shape: 'hexagon', mass: 0.38, k: 0.24, lift: 0.95, drag: 0.34, side: 0.18,
+    toughness: 1.3, saw: 0.75, tail: 16, wobble: 0, rollPush: 0.5,
+    stats: { Subida: 5, Agilidad: 1, Resistencia: 5, Corte: 2 },
+  },
+  pavo: {
+    name: 'Pavo', desc: 'Sin cola: muy rápido y filoso, pero inestable y difícil de controlar.',
+    size: 1, shape: 'diamond', rhombus: { top: 0.85, side: 0.85, mid: 0, bottom: -0.85 }, fringe: true, mass: 0.26, k: 0.18, lift: 0.85, drag: 0.26, side: 0.55,
+    toughness: 0.9, saw: 1.35, tail: 0, wobble: 0.55, rollPush: 1.3,
+    stats: { Subida: 2, Agilidad: 5, Resistencia: 3, Corte: 5 },
+  },
+};
+const KITE_KEYS = Object.keys(KITE_TYPES);
+const KITE_VISUAL_SCALE = 1.5;   // los volantines se dibujan más grandes para que se distingan de lejos (no cambia la física)
+const PLAYER_CAN_PICK = true;    // false: el jugador usa el clásico; los tipos son solo para los rivales
+
+// ---------- Volantín (forma) ----------
+// Devuelve el grupo 3D y la altura (local) de la punta de abajo, donde se amarra la cola.
+function makeKite(colors, kt) {
   const g = new THREE.Group();
-  const top = [0, 0.9, 0], right = [0.65, 0.1, 0], bottom = [0, -0.75, 0], left = [-0.65, 0.1, 0], c = [0, 0.1, 0];
-  const tris = [[top, right, c], [right, bottom, c], [bottom, left, c], [left, top, c]];
-  tris.forEach((t, i) => {
+  const stickMat = new THREE.MeshBasicMaterial({ color: 0x5b3b1e });
+  const addTri = (a, b, c, color) => {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(t.flat(), 3));
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([...a, ...b, ...c], 3));
     geo.computeVertexNormals();
-    const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: colors[i], side: THREE.DoubleSide }));
+    // Un poco de brillo propio para que los colores se vean aunque estén a contraluz
+    const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.35, side: THREE.DoubleSide }));
     m.castShadow = true;
     g.add(m);
-  });
-  // Varillas
-  const stickMat = new THREE.MeshBasicMaterial({ color: 0x5b3b1e });
-  const v = new THREE.Mesh(new THREE.BoxGeometry(0.03, 1.65, 0.03), stickMat);
-  v.position.set(0, 0.075, -0.02);
-  const h = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.03, 0.03), stickMat);
-  h.position.set(0, 0.1, -0.02);
-  g.add(v, h);
-  return g;
+  };
+  let bottomY;
+  if (kt.shape === 'hexagon') {
+    // Chonchón: hexágono con tres varillas cruzadas
+    const R = 0.85, c = [0, 0, 0];
+    const pts = Array.from({ length: 6 }, (_, i) => {
+      const a = Math.PI / 2 + i * Math.PI / 3;
+      return [Math.cos(a) * R, Math.sin(a) * R, 0];
+    });
+    pts.forEach((p, i) => addTri(p, pts[(i + 1) % 6], c, colors[i % colors.length]));
+    [0, Math.PI / 3, -Math.PI / 3].forEach(a => {
+      const s = new THREE.Mesh(new THREE.BoxGeometry(0.03, R * 2, 0.03), stickMat);
+      s.rotation.z = a;
+      s.position.z = -0.02;
+      g.add(s);
+    });
+    bottomY = -R;
+  } else {
+    // Rombo: cada tipo con sus proporciones (ñecla angosta y alta, pavo ancho y cuadrado)
+    const P = kt.rhombus || { top: 0.9, side: 0.65, mid: 0.1, bottom: -0.75 };
+    const top = [0, P.top, 0], right = [P.side, P.mid, 0], bottom = [0, P.bottom, 0], left = [-P.side, P.mid, 0], c = [0, P.mid, 0];
+    // La ñecla va en dos colores (arriba / abajo); el resto en cuatro
+    const cols = kt.twoTone ? [colors[0], colors[1], colors[1], colors[0]] : colors;
+    [[top, right, c], [right, bottom, c], [bottom, left, c], [left, top, c]].forEach((t, i) => addTri(...t, cols[i]));
+    const v = new THREE.Mesh(new THREE.BoxGeometry(0.03, P.top - P.bottom, 0.03), stickMat);
+    v.position.set(0, (P.top + P.bottom) / 2, -0.02);
+    const h = new THREE.Mesh(new THREE.BoxGeometry(P.side * 2, 0.03, 0.03), stickMat);
+    h.position.set(0, P.mid, -0.02);
+    g.add(v, h);
+    if (kt.fringe) {
+      // Pavo: flecos largos de papel colgando de las puntas de los lados (se ven de lejos)
+      [-1, 1].forEach(s => {
+        for (let k = 0; k < 5; k++) {
+          const x = s * (P.side - 0.04 * k), len = 0.7 + k * 0.12;
+          addTri([x - 0.035, P.mid, 0.005], [x + 0.035, P.mid, 0.005], [x + s * 0.1, P.mid - len, 0.005], k % 2 ? colors[1] : colors[3] ?? colors[0]);
+        }
+      });
+    }
+    bottomY = P.bottom;
+  }
+  g.scale.setScalar(kt.size * KITE_VISUAL_SCALE);
+  return { group: g, bottomY: bottomY * kt.size * KITE_VISUAL_SCALE, localBottomY: bottomY };
 }
 
 // ---------- Volantinero: personaje + volantín + hilo + cola ----------
-const STRING_PTS = 24, TAIL_N = 14, TAIL_SEG = 0.35;
+const STRING_PTS = 24, TAIL_SEG = 0.35;
 const bowGeo = new THREE.PlaneGeometry(0.28, 0.12);
+
+// Etiqueta de texto que siempre mira a la cámara y se ve a través de todo
+const LABEL_TIME = 15, LABEL_FADE = 2;   // segundos que se muestran los nombres al empezar, y cuánto tardan en desaparecer
+let labelsFrom = null;                    // momento en que empieza a contar (al cerrar el selector)
+function makeLabelSprite() {
+  const cv = document.createElement('canvas');
+  cv.width = 384; cv.height = 64;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  sp.renderOrder = 9;
+  sp.userData.cv = cv;
+  scene.add(sp);
+  return sp;
+}
+function setLabelText(sp, text) {
+  const cv = sp.userData.cv, g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.font = 'bold 28px system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  const w = Math.min(cv.width - 4, g.measureText(text).width + 28);
+  g.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  g.beginPath();
+  if (g.roundRect) g.roundRect((cv.width - w) / 2, 8, w, 48, 16); else g.rect((cv.width - w) / 2, 8, w, 48);
+  g.fill();
+  g.fillStyle = '#fff';
+  g.fillText(text, cv.width / 2, 33);
+  sp.material.map.needsUpdate = true;
+}
+
+// Arma (o rearma, si cambia de tipo) el volantín y su cola
+function buildKiteParts(f, typeKey) {
+  if (f.kite) {
+    scene.remove(f.kite, f.tailLine, ...f.bows.map(b => b.mesh));
+    f.tailGeo.dispose();
+  }
+  const kt = KITE_TYPES[typeKey];
+  f.kiteType = typeKey;
+  f.kt = kt;
+  f.toughness = (f.style?.toughness ?? 1) * kt.toughness;
+  if (f.label) setLabelText(f.label, `${f.name} · ${kt.name}`);
+
+  const { group, bottomY, localBottomY } = makeKite(f.kiteColors, kt);
+  f.kite = group;
+  f.tailAttachY = bottomY;
+  f.tailLocalY = localBottomY;
+  scene.add(group);
+
+  f.tail = [];
+  for (let i = 0; i < kt.tail; i++) f.tail.push({ p: new V3(), o: new V3() });
+  f.tailGeo = new THREE.BufferGeometry();
+  f.tailGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(Math.max(1, kt.tail) * 3), 3));
+  f.tailLine = new THREE.Line(f.tailGeo, new THREE.LineBasicMaterial({ color: f.tailColors[1] }));
+  f.tailLine.frustumCulled = false;
+  f.tailLine.visible = kt.tail > 1;
+  scene.add(f.tailLine);
+  f.bows = [];
+  for (let i = 2; i < kt.tail; i += 2) {
+    const b = new THREE.Mesh(bowGeo, new THREE.MeshBasicMaterial({ color: f.tailColors[(i / 2) % 2], side: THREE.DoubleSide }));
+    scene.add(b);
+    f.bows.push({ mesh: b, idx: i });
+  }
+}
 
 function createFlyer(o) {
   const rig = buildCharacter(o.look);
   rig.root.position.set(...o.at);
   scene.add(rig.root);
 
-  const kite = makeKite(o.kiteColors);
-  scene.add(kite);
-
   const stringGeo = new THREE.BufferGeometry();
   stringGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(STRING_PTS * 3), 3));
   const stringLine = new THREE.Line(stringGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }));
   stringLine.frustumCulled = false;
   scene.add(stringLine);
-
-  const tail = [];
-  for (let i = 0; i < TAIL_N; i++) tail.push({ p: new V3(), o: new V3() });
-  const tailGeo = new THREE.BufferGeometry();
-  tailGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(TAIL_N * 3), 3));
-  const tailLine = new THREE.Line(tailGeo, new THREE.LineBasicMaterial({ color: o.tailColors[1] }));
-  tailLine.frustumCulled = false;
-  scene.add(tailLine);
-  const bows = [];
-  for (let i = 2; i < TAIL_N; i += 2) {
-    const b = new THREE.Mesh(bowGeo, new THREE.MeshBasicMaterial({ color: o.tailColors[(i / 2) % 2], side: THREE.DoubleSide }));
-    scene.add(b);
-    bows.push({ mesh: b, idx: i });
-  }
 
   // Resaltado cuando este volantín te ataca: anillo rojo + flecha encima (se ven a través de todo)
   const hl = new THREE.Group();
@@ -847,10 +997,15 @@ function createFlyer(o) {
   hl.visible = false;
   scene.add(hl);
 
+  // Etiqueta flotante con nombre y tipo de volantín (solo rivales)
+  const label = o.isPlayer ? null : makeLabelSprite();
+
   const f = {
     name: o.name, isPlayer: !!o.isPlayer,
-    styleName: o.style, style: STYLES[o.style], toughness: STYLES[o.style]?.toughness ?? 1,
-    rig, kite, stringGeo, stringLine, tail, tailGeo, tailLine, bows, hl, ring, arrow,
+    styleName: o.style, style: STYLES[o.style],
+    kiteColors: o.kiteColors, tailColors: o.tailColors,
+    kite: null, tail: [], tailGeo: null, tailLine: null, bows: [],
+    rig, stringGeo, stringLine, hl, ring, arrow, label,
     pts: Array.from({ length: STRING_PTS }, () => new V3()),
     anchor: new V3(o.at[0], 1.3, o.at[2] - 0.4),
     pos: new V3(), vel: new V3(), wind: new V3(),
@@ -864,6 +1019,7 @@ function createFlyer(o) {
     wanderUntil: 0, wanderX: o.at[0] * 0.8, zigzag: false,
     roll: null, rollAngle: 0, rollPush: 0, nextRollAt: 5 + Math.random() * 10,
   };
+  buildKiteParts(f, o.kiteType || 'clasico');
   resetFlyer(f);
   return f;
 }
@@ -885,7 +1041,7 @@ function resetFlyer(f) {
   f.ready = false;
   f.readyTime = 0;
   f.dive = false;
-  const bottom = f.pos.clone().add(new V3(0, -0.75, 0));
+  const bottom = f.pos.clone().add(new V3(0, f.tailAttachY, 0));
   f.tail.forEach((t, i) => { t.p.copy(bottom).y -= i * TAIL_SEG * 0.5; t.o.copy(t.p); });
 }
 
@@ -928,7 +1084,6 @@ for (let i = 0; i < 6; i++) {
 let started = false, time = 0, score = 0, lost = 0;
 const wind = new V3();   // viento a la altura del volantín del jugador (para HUD, nubes, rayas)
 
-const MASS = 0.3, K = 0.18, LIFT = 0.9, DRAG = 0.3, SIDE = 0.3;
 const REEL_IN = 4, REEL_OUT = 3, MIN_L = 3, MAX_L = 150;
 // Entradas suavizadas (suben/bajan gradualmente al mantener la tecla)
 const STEER_RAMP = 1.5, RELEASE_RAMP = 1.2, PULL_RAMP = 1.5;
@@ -938,11 +1093,15 @@ const CONTACT_IN = 0.7, CONTACT_OUT = 2.0, SAW_RATE = 0.5, DAMAGE_HEAL = 0.03;
 const player = createFlyer({
   name: 'Tú', isPlayer: true, at: [0, 0, 0],
   kiteColors: [0xffd500, 0xe0262b, 0x1e5bd8, 0xffffff], tailColors: [0xffd500, 0x1e5bd8],
+  kiteType: PLAYER_CAN_PICK ? savedKiteType() : 'clasico',
 });
-const rivals = RIVALS.map(r => createFlyer({
+// Reparte los tipos de volantín al azar entre los rivales, sin repetir (con 4 rivales salen los 4 tipos)
+const rivalKiteTypes = [...KITE_KEYS].sort(() => Math.random() - 0.5);
+const rivals = RIVALS.map((r, i) => createFlyer({
   name: r.name, at: r.at, style: r.style,
   look: { shirt: r.shirt, cap: r.cap, pants: 0x3a3a48, hair: 0x1f140c },
   kiteColors: r.kite, tailColors: r.tail,
+  kiteType: rivalKiteTypes[i % rivalKiteTypes.length],   // tipos al azar, sin repetir mientras alcancen
 }));
 const flyers = [player, ...rivals];
 
@@ -954,6 +1113,11 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyR') { resetFlyer(player); showMsg(''); }
   if (e.code === 'KeyE') nextBiome();
+  if (e.code === 'KeyV' && PLAYER_CAN_PICK) openPicker();
+  if (pickerOpen && /^Digit[1-9]$/.test(e.code)) {
+    const key = KITE_KEYS[+e.code.slice(5) - 1];
+    if (key) choosePlayerKite(key);
+  }
 });
 addEventListener('keyup', e => keys[e.code] = false);
 // Click / toque sobre el escenario = tirar (cuenta los dedos para el multitáctil)
@@ -985,6 +1149,69 @@ document.querySelectorAll('#touch button[data-key]').forEach(btn => {
 });
 document.getElementById('btnReset').addEventListener('pointerdown', e => { e.preventDefault(); resetFlyer(player); showMsg(''); });
 document.getElementById('btnScene').addEventListener('pointerdown', e => { e.preventDefault(); nextBiome(); });
+document.getElementById('btnKite').addEventListener('pointerdown', e => { e.preventDefault(); openPicker(); });
+
+// ---------- Selector de volantín ----------
+// El jugador elige su volantín al empezar (tecla V o botón para cambiar); los rivales reciben uno al azar.
+// Con PLAYER_CAN_PICK = false el jugador usa siempre el clásico.
+function savedKiteType() {
+  let k = null;
+  try { k = localStorage.getItem('volantines.tipo'); } catch (e) {}
+  return KITE_TYPES[k] ? k : 'clasico';
+}
+// Dibujito del volantín para la tarjeta
+function kiteSVG(kt, colors) {
+  const hex = c => '#' + c.toString(16).padStart(6, '0');
+  let shapes;
+  if (kt.shape === 'hexagon') {
+    const p = Array.from({ length: 6 }, (_, i) => {
+      const a = -Math.PI / 2 + i * Math.PI / 3;
+      return [32 + Math.cos(a) * 26, 30 + Math.sin(a) * 26];
+    });
+    shapes = p.map((q, i) => `<polygon points="32,30 ${q} ${p[(i + 1) % 6]}" fill="${hex(colors[i % 4])}"/>`).join('');
+  } else {
+    const s = kt.size * 29, P = kt.rhombus || { top: 0.9, side: 0.65, mid: 0.1, bottom: -0.75 };
+    const T = [32, 30 - P.top * s], R = [32 + P.side * s, 30 - P.mid * s], B = [32, 30 - P.bottom * s], Lf = [32 - P.side * s, 30 - P.mid * s], C = [32, 30 - P.mid * s];
+    const cols = kt.twoTone ? [colors[0], colors[1], colors[1], colors[0]] : colors;
+    shapes = [[T, R], [R, B], [B, Lf], [Lf, T]].map(([a, b], i) => `<polygon points="${C} ${a} ${b}" fill="${hex(cols[i])}"/>`).join('');
+    if (kt.fringe) shapes += `<path d="M${Lf} l-3,20 M${Lf[0] + 3},${Lf[1]} l-2,23 M${R} l3,20 M${R[0] - 3},${R[1]} l2,23" stroke="${hex(colors[1])}" stroke-width="2"/>`;
+  }
+  const bottom = kt.shape === 'hexagon' ? 56 : 30 - (kt.rhombus?.bottom ?? -0.75) * kt.size * 29;
+  const tail = kt.tail ? `<path d="M32,${bottom} q5,4 0,8 q-5,4 0,8" stroke="#1e5bd8" stroke-width="1.5" fill="none"/>` : '';
+  return `<svg viewBox="0 0 64 74" aria-hidden="true">${shapes}${tail}</svg>`;
+}
+
+let pickerOpen = false;
+const pickerEl = document.getElementById('picker');
+function openPicker() {
+  const cur = player.kiteType;
+  document.getElementById('cards').innerHTML = KITE_KEYS.map((k, i) => {
+    const kt = KITE_TYPES[k];
+    const stats = Object.entries(kt.stats).map(([n, v]) =>
+      `<div class="stat"><span>${n}</span><span class="pips">${'●'.repeat(v)}${'○'.repeat(5 - v)}</span></div>`).join('');
+    return `<div class="card${k === cur ? ' sel' : ''}" data-kite="${k}">
+      ${kiteSVG(kt, player.kiteColors)}<h3>${kt.name}</h3><p>${kt.desc}</p>${stats}
+      <span class="key">tecla ${i + 1}</span></div>`;
+  }).join('');
+  pickerEl.querySelectorAll('.card').forEach(c =>
+    c.addEventListener('click', () => choosePlayerKite(c.dataset.kite)));
+  pickerEl.hidden = false;
+  document.getElementById('msg').style.visibility = 'hidden';   // que no se vea el mensaje detrás
+  pickerOpen = true;
+}
+function choosePlayerKite(key) {
+  try { localStorage.setItem('volantines.tipo', key); } catch (e) {}
+  if (key !== player.kiteType) buildKiteParts(player, key);
+  resetFlyer(player);
+  pickerEl.hidden = true;
+  if (labelsFrom === null) labelsFrom = time;   // los nombres de los rivales empiezan a contar desde aquí
+  document.getElementById('msg').style.visibility = '';
+  pickerOpen = false;
+  keys.Space = false; mouseDown = false;
+  showMsg(started ? '' : `¡Tira para elevar tu ${KITE_TYPES[key].name.toLowerCase()}!<small>${document.body.classList.contains('touch') ? 'Mantén el botón TIRAR' : 'Mantén ESPACIO o el click'}</small>`);
+}
+if (PLAYER_CAN_PICK) openPicker();   // al empezar, elegir volantín
+else labelsFrom = 0;
 
 // Escenario: nombre en el HUD, aviso al empezar, y cambio al siguiente (recarga la página con ?escenario=...)
 function nextBiome() {
@@ -1092,7 +1319,8 @@ function stepFlyer(f, dt) {
 
   // Fuerzas aerodinámicas
   rel.subVectors(f.wind, f.vel);
-  const q = K * rel.lengthSq();
+  const kt = f.kt;
+  const q = kt.k * rel.lengthSq();
   let liftFactor = 0.25;
   if (!free) {
     tmp.subVectors(f.pos, f.anchor);
@@ -1100,12 +1328,16 @@ function stepFlyer(f, dt) {
     liftFactor = 0.4 + 0.8 * Math.cos(elev);
   }
   force.set(0, 0, 0);
-  force.addScaledVector(rel.normalize(), DRAG * q);         // arrastre
-  force.y += LIFT * q * liftFactor;                         // sustentación
-  if (!free) force.x += (f.steerIn + f.rollPush) * SIDE * q;  // dirección (+ empujón al girar como rueda)
-  force.y -= MASS * 9.8;                                    // gravedad
+  force.addScaledVector(rel.normalize(), kt.drag * q);      // arrastre
+  force.y += kt.lift * q * liftFactor;                      // sustentación
+  if (!free) {
+    force.x += (f.steerIn + f.rollPush * kt.rollPush) * kt.side * q;   // dirección (+ empujón al girar como rueda)
+    // Inestabilidad (pavo): se va solo de lado a lado
+    if (kt.wobble) force.x += kt.wobble * 0.3 * q * (Math.sin(time * 2.3 + f.phase) * 0.6 + Math.sin(time * 5.1 + f.phase * 2) * 0.4);
+  }
+  force.y -= kt.mass * 9.8;                                 // gravedad
 
-  f.vel.addScaledVector(force, dt / MASS);
+  f.vel.addScaledVector(force, dt / kt.mass);
   f.vel.multiplyScalar(0.995);
   f.pos.addScaledVector(f.vel, dt);
 
@@ -1213,7 +1445,7 @@ function aiThink(f, dt) {
       f.mode = 'attack';
       f.dive = false;
       f.attackEnd = time + st.attackTime;
-      showToast(provoked ? `¡${f.name} se defiende!` : `¡${f.name} (${st.label}) va por tu volantín!`);
+      showToast(provoked ? `¡${f.name} se defiende!` : `¡${f.name} (${st.label}) va por tu volantín con su ${f.kt.name.toLowerCase()}!`);
     }
   }
 
@@ -1313,7 +1545,7 @@ function engagedWith(f) {
   return null;
 }
 // Fuerza de serrucho: tirar o dar hilo rápido roza más el hilo del otro
-const sawPower = f => 0.2 + 1.3 * f.pullIn + 0.8 * f.releaseIn;
+const sawPower = f => (0.2 + 1.3 * f.pullIn + 0.8 * f.releaseIn) * f.kt.saw;
 
 function cutFlyer(victim, by) {
   victim.state = 'cut';
@@ -1362,10 +1594,11 @@ const TAIL_SETTLE = 2.5;     // qué tan rápido vuelve a su forma de reposo
 const tailRest = new V3();
 function tailPhysics(f, dt, attach) {
   const tail = f.tail;
+  if (tail.length < 2) return;   // pavo: sin cola
   tail[0].p.copy(attach);
   tailRest.set(f.wind.x * 0.5, -4, f.wind.z * 0.5).normalize();
   const settle = 1 - Math.exp(-TAIL_SETTLE * dt);
-  for (let i = 1; i < TAIL_N; i++) {
+  for (let i = 1; i < tail.length; i++) {
     const t = tail[i];
     const v = tmp.subVectors(t.p, t.o).multiplyScalar(TAIL_DAMP);
     t.o.copy(t.p);
@@ -1379,7 +1612,7 @@ function tailPhysics(f, dt, attach) {
     t.p.z += (attach.z + tailRest.z * i * TAIL_SEG - t.p.z) * settle;
   }
   for (let it = 0; it < 4; it++) {
-    for (let i = 1; i < TAIL_N; i++) {
+    for (let i = 1; i < tail.length; i++) {
       const a = tail[i - 1].p, b = tail[i].p;
       const delta = tmp.subVectors(b, a);
       const len = delta.length() || 1e-6;
@@ -1428,6 +1661,19 @@ function updateFlyerVisuals(f, dt) {
 
   updateHighlight(f);
 
+  // Etiqueta sobre el volantín rival: solo al inicio de la partida, luego se desvanece.
+  // Tamaño parejo en pantalla aunque esté lejos.
+  if (f.label) {
+    const shown = labelsFrom === null ? 0 : time - labelsFrom;
+    const fade = 1 - THREE.MathUtils.smoothstep(shown, LABEL_TIME, LABEL_TIME + LABEL_FADE);
+    f.label.material.opacity = fade;
+    f.label.visible = fade > 0 && f.state !== 'crashed';
+    const dist = camera.position.distanceTo(f.pos);
+    const s = dist * 0.04;
+    f.label.position.set(f.pos.x, f.pos.y + 1.2 * f.kt.size * KITE_VISUAL_SCALE + s * 0.6, f.pos.z);
+    f.label.scale.set(s * 6, s, 1);
+  }
+
   // Volantín: mira a su dueño, con giro según dirección (o da vueltas si está cortado)
   const k = f.kite;
   k.position.copy(f.pos);
@@ -1444,7 +1690,7 @@ function updateFlyerVisuals(f, dt) {
 
   // Cola
   k.updateMatrixWorld();
-  const attach = new V3(0, -0.75, 0).applyMatrix4(k.matrixWorld);
+  const attach = new V3(0, f.tailLocalY, 0).applyMatrix4(k.matrixWorld);
   tailPhysics(f, dt, attach);
   const tp = f.tailGeo.attributes.position;
   f.tail.forEach((t, i) => tp.setXYZ(i, t.p.x, t.p.y, t.p.z));
@@ -1574,7 +1820,7 @@ function loop() {
   const frame = Math.min(clock.getDelta(), 0.05);
 
   // Entradas del jugador
-  const pulling = keys.Space || mouseDown;
+  const pulling = !pickerOpen && (keys.Space || mouseDown);
   if (pulling && !started) { started = true; player.armed = true; showMsg(''); }
   player.pullT = pulling && player.state === 'flying' ? 1 : 0;
   player.releaseT = (keys.KeyS || keys.ArrowDown) && player.state === 'flying' ? 1 : 0;
