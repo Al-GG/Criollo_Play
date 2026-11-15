@@ -67,6 +67,10 @@
   #touch button.arrow { font-size: 30px; }
   #touch button.big { width: 104px; height: 104px; font-size: 20px; background: rgba(217,65,43,0.55); }
   #touch button.on { background: rgba(255,255,255,0.45); transform: scale(0.94); }
+  #touch #btnScene {
+    position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: 68px;
+    width: 48px; height: 48px; font-size: 22px;
+  }
   #touch #btnReset {
     position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: 12px;
     width: 48px; height: 48px; font-size: 24px;
@@ -78,6 +82,7 @@
 </head>
 <body>
 <div id="hud">
+  <span id="place"></span><br>
   Altura: <b id="alt">0</b> m<br>
   Máxima: <span id="max">0</span> m<br>
   Hilo: <span id="len">0</span> m &nbsp;<span class="bar"><i id="hpBar"></i></span><br>
@@ -104,9 +109,10 @@
     <button class="big" data-key="Space">Tirar</button>
   </div>
   <button id="btnReset" aria-label="Reiniciar">↻</button>
+  <button id="btnScene" aria-label="Cambiar escenario">🗺</button>
 </div>
 <div id="help">
-  <b>ESPACIO / click</b> tirar &nbsp;·&nbsp; <b>A D / ← →</b> dirigir &nbsp;·&nbsp; <b>S / ↓</b> dar hilo &nbsp;·&nbsp; <b>R</b> reiniciar
+  <b>ESPACIO / click</b> tirar &nbsp;·&nbsp; <b>A D / ← →</b> dirigir &nbsp;·&nbsp; <b>S / ↓</b> dar hilo &nbsp;·&nbsp; <b>R</b> reiniciar &nbsp;·&nbsp; <b>E</b> cambiar escenario
   <br>Cruza tu hilo con el de un rival y serrucha (tira o da hilo) para comisionarlo
 </div>
 <div id="msg">¡Tira para elevar el volantín!<small>Mantén ESPACIO o el click</small></div>
@@ -126,24 +132,29 @@ const clamp = THREE.MathUtils.clamp;
 //  steerGain  qué tan rápido mueve el volantín hacia su objetivo; steerDamp lo frena (más = más suave)
 //  toughness  qué tan curado está su hilo (más = aguanta más el serrucho)
 //  attackTime cuánto dura un ataque; rest = pausa mínima entre ataques [mín, máx]; eagerness = ganas de atacar
+//  wanderRange cuánto se mueve de lado a lado al pasear (m); wanderTime cada cuánto cambia de rumbo [mín, máx]
+//  zigChance probabilidad de hacer zigzag en vez de ir a un punto; zigFreq rapidez del zigzag
 //  sawFreq / saw  ritmo y forma de serruchar cuando está enredado
 const STYLES = {
   // Rápido: ataques cortos y seguidos, se mueve ligero y serrucha con tirones, pero su hilo es más débil
   rapido: {
     label: 'rápido', climbAlt: 30, steerGain: 0.22, steerDamp: 0.18, toughness: 0.75,
     attackTime: 10, rest: [4, 8], eagerness: 1.6, sawFreq: 7,
+    wanderRange: 14, wanderTime: [2, 4], zigChance: 0.4, zigFreq: 1.6,
     saw: w => w > -0.5 ? { pull: 1 } : { give: 0.6 },
   },
   // Pícaro: se pone por encima de tu volantín y se tira en picada para cruzar el hilo; serrucha dando hilo
   picada: {
     label: 'pícaro', climbAlt: 36, steerGain: 0.15, steerDamp: 0.25, toughness: 1.0,
     attackTime: 16, rest: [8, 14], eagerness: 1.0, sawFreq: 2.5,
+    wanderRange: 12, wanderTime: [3, 6], zigChance: 0.25, zigFreq: 1.0,
     saw: w => w > 0 ? { give: 1 } : { pull: 0.6 },
   },
   // Defensivo: sube alto y casi nunca te busca, pero si te acercas se defiende con hilo muy curado
   defensivo: {
     label: 'defensivo', climbAlt: 40, steerGain: 0.1, steerDamp: 0.35, toughness: 1.5,
     counterDist: 12, attackTime: 12, rest: [15, 25], eagerness: 0.4, sawFreq: 1.5,
+    wanderRange: 8, wanderTime: [4, 8], zigChance: 0.15, zigFreq: 0.7,
     saw: () => ({ pull: 0.75 }),
   },
 };
@@ -154,78 +165,440 @@ const RIVALS = [
   { name: 'el Tito',   style: 'defensivo', at: [2, 0, -9],  shirt: 0x333333, cap: 0xffd500, kite: [0x111111, 0xffd500, 0x111111, 0xffd500], tail: [0xffd500, 0x111111] },
 ];
 
+// ---------- Escenarios (biomas de Chile) ----------
+// Cada vez que se abre el juego se elige uno al azar (sin repetir el anterior).
+// También se puede forzar con ?escenario=playa en la URL, o cambiar con la tecla E.
+const BIOMES = {
+  campo: {
+    name: 'Campo', place: 'Valle Central',
+    sky: [0x2f7fd0, 0xcfe8f5], hemi: [0xdff2ff, 0x5a7a3a], sunColor: 0xfff4e0, sunI: 1.5,
+    ground: { base: 0x5fa843, dark: 0x3d7a32, dry: 0xb7b45a },
+    shape: (x, z, n) => n * 30 - 6,
+    mountains: { rock: 0x6f7f95, dark: 0x4f5d72, snowLine: 150, height: 1 },
+    grass: { count: 4500, hue: 0.25, light: 0.28 }, flowers: 400,
+    props: { count: 110, kinds: ['pine', 'round'], clustered: true },
+    clouds: { count: 26, gray: 0 }, wind: 1,
+  },
+  bosque: {
+    name: 'Bosque del sur', place: 'Los Lagos',
+    sky: [0x4c84b8, 0xd3e1ea], hemi: [0xd8e6f0, 0x3a5a2a], sunColor: 0xf4f0e8, sunI: 1.25,
+    ground: { base: 0x3f8a3a, dark: 0x285c2a, dry: 0x6f8f3a },
+    shape: (x, z, n) => n * 42 - 8,
+    mountains: { rock: 0x5d6b78, dark: 0x3f4b58, snowLine: 130, height: 1.1 }, volcano: true,
+    grass: { count: 6000, hue: 0.28, light: 0.22 }, flowers: 150,
+    props: { count: 320, kinds: ['pine', 'pine', 'round'], clustered: false, minDist: 30 },
+    clouds: { count: 40, gray: 0.35 }, wind: 0.9,
+  },
+  desierto: {
+    name: 'Desierto', place: 'Atacama',
+    sky: [0x1a62cf, 0xf1dfc0], hemi: [0xfff0dc, 0x9a6a3a], sunColor: 0xffe8c8, sunI: 1.75,
+    ground: { base: 0xd6a467, dark: 0xb77f4c, dry: 0xe9c690 },
+    shape: (x, z, n) => n * 16 + Math.sin(x * 0.025 + n * 4) * 5 - 3,   // dunas
+    mountains: { rock: 0x9a6a52, dark: 0x7a4f3e, snowLine: 210, height: 1.15 }, volcano: true,
+    grass: { count: 300, hue: 0.13, light: 0.45 }, flowers: 0, rocks: 160,
+    props: { count: 70, kinds: ['cactus'], clustered: false },
+    clouds: { count: 4, gray: 0 }, wind: 1.05,
+  },
+  playa: {
+    name: 'Playa', place: 'Costa central',
+    sky: [0x2a8ae0, 0xd6eff9], hemi: [0xe8f6ff, 0xc9b78a], sunColor: 0xfff6e8, sunI: 1.6,
+    ground: { base: 0xe6d3a3, dark: 0xd2b98a, dry: 0xf2e4ba, under: 0xa79a72 },
+    // El mar está hacia donde sopla el viento: la arena baja suavemente desde z = -35
+    shape: (x, z, n) => n * 7 - 1,
+    terrain: (x, z, d, base) => z < -35 ? -Math.min(8, (-35 - z) * 0.12) : base,
+    sea: true, mountains: null,
+    grass: { count: 700, hue: 0.16, light: 0.4, behindOnly: true }, flowers: 0,
+    props: { count: 45, kinds: ['palm'], clustered: false, behindOnly: true },
+    clouds: { count: 14, gray: 0 }, wind: 1.15,
+  },
+  ciudad: {
+    name: 'Ciudad', place: 'Santiago',
+    sky: [0x3f86c8, 0xdcd6c6], hemi: [0xe8eef2, 0x6a6a5a], sunColor: 0xfff0d8, sunI: 1.4,
+    ground: { base: 0x5c9a45, dark: 0x467a38, dry: 0x8c9a5a, far: 0x7c7c78 },
+    shape: (x, z, n) => n * 3,
+    mountains: { rock: 0x6f7686, dark: 0x515868, snowLine: 140, height: 1.2 },
+    grass: { count: 3000, hue: 0.26, light: 0.3 }, flowers: 120,
+    props: { count: 30, kinds: ['round'], clustered: false, maxDist: 70 }, buildings: 260,
+    clouds: { count: 12, gray: 0.15 }, wind: 0.95,
+  },
+  cerros: {
+    name: 'Cerros', place: 'Valparaíso',
+    sky: [0x2f7fd0, 0xd8ecf6], hemi: [0xe2f2ff, 0x6a7a4a], sunColor: 0xfff2e0, sunI: 1.5,
+    ground: { base: 0x6a9a48, dark: 0x4d7a38, dry: 0xa8a060, under: 0x8a8a70 },
+    shape: (x, z, n) => n * 70 + 6,
+    terrain: (x, z, d, base) => z < -260 ? Math.min(base, -10) : base,   // el mar al fondo
+    sea: true, mountains: null,
+    grass: { count: 3500, hue: 0.24, light: 0.3 }, flowers: 250,
+    props: { count: 60, kinds: ['round'], clustered: true }, houses: 420,
+    clouds: { count: 20, gray: 0 }, wind: 1.1,
+  },
+};
+
+const BIOME_KEYS = Object.keys(BIOMES);
+function pickBiome() {
+  const asked = new URLSearchParams(location.search).get('escenario');
+  if (asked && BIOMES[asked]) return asked;
+  let last = null;
+  try { last = localStorage.getItem('volantines.ultimoEscenario'); } catch (e) {}
+  const options = BIOME_KEYS.filter(k => k !== last);
+  const key = options[Math.floor(Math.random() * options.length)];
+  try { localStorage.setItem('volantines.ultimoEscenario', key); } catch (e) {}
+  return key;
+}
+const BIOME_KEY = pickBiome();
+const BIOME = BIOMES[BIOME_KEY];
+
 // ---------- Escena ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
+const SKY_TOP = new THREE.Color(BIOME.sky[0]), SKY_HORIZON = new THREE.Color(BIOME.sky[1]);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87c5ea);
-scene.fog = new THREE.Fog(0x87c5ea, 80, 320);
+scene.background = SKY_HORIZON.clone();
+scene.fog = new THREE.Fog(SKY_HORIZON, 140, 900);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 2200);
 
-scene.add(new THREE.HemisphereLight(0xdff2ff, 0x5a8a3a, 0.9));
-const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+scene.add(new THREE.HemisphereLight(BIOME.hemi[0], BIOME.hemi[1], 0.85));
+const sun = new THREE.DirectionalLight(BIOME.sunColor, BIOME.sunI);
 sun.position.set(30, 60, 20);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0005;
 Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40 });
 scene.add(sun);
 
-// Suelo
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(800, 800),
-  new THREE.MeshLambertMaterial({ color: 0x6fb04a })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
+// Cielo: esfera grande con degradado (color arriba, claro en el horizonte)
+scene.add(new THREE.Mesh(
+  new THREE.SphereGeometry(2000, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { top: { value: SKY_TOP }, horizon: { value: SKY_HORIZON } },
+    vertexShader: `varying vec3 vPos; void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform vec3 top; uniform vec3 horizon; varying vec3 vPos;
+      void main() { float h = clamp(normalize(vPos).y, 0.0, 1.0); gl_FragColor = vec4(mix(horizon, top, pow(h, 0.55)), 1.0); }`,
+  })
+));
 
-// Cerros al fondo
-const hillMat = new THREE.MeshLambertMaterial({ color: 0x4f8f3a });
-for (let i = 0; i < 14; i++) {
-  const r = 25 + Math.random() * 35;
-  const hill = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), hillMat);
-  hill.position.set(-200 + i * 30 + Math.random() * 20, -r * 0.55, -180 - Math.random() * 60);
-  scene.add(hill);
+// ---------- Ruido (para terreno y cordillera) ----------
+function hash(x, z) {
+  const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+function noise(x, z) {
+  const xi = Math.floor(x), zi = Math.floor(z), xf = x - xi, zf = z - zi;
+  const u = xf * xf * (3 - 2 * xf), v = zf * zf * (3 - 2 * zf);
+  const a = hash(xi, zi), b = hash(xi + 1, zi), c = hash(xi, zi + 1), d = hash(xi + 1, zi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function fbm(x, z, oct = 4) {
+  let sum = 0, amp = 0.5, f = 1;
+  for (let i = 0; i < oct; i++) { sum += noise(x * f, z * f) * amp; f *= 2; amp *= 0.5; }
+  return sum / (1 - Math.pow(0.5, oct));
 }
 
-// Árboles (lejos del jugador y de los rivales)
-const trunkMat = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
-const leafMat = new THREE.MeshLambertMaterial({ color: 0x2f7a32 });
-for (let i = 0; i < 40; i++) {
-  const x = (Math.random() - 0.5) * 160;
-  const z = -20 - Math.random() * 120;
-  if (Math.abs(x) < 6 && z > -30) continue;
-  if (RIVALS.some(r => Math.hypot(x - r.at[0], z - r.at[2]) < 7)) continue;
-  const tree = new THREE.Group();
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 2), trunkMat);
-  trunk.position.y = 1;
-  const leaves = new THREE.Mesh(new THREE.ConeGeometry(1.6, 4, 8), leafMat);
-  leaves.position.y = 4;
-  trunk.castShadow = leaves.castShadow = true;
-  tree.add(trunk, leaves);
-  const s = 0.7 + Math.random() * 0.8;
-  tree.scale.setScalar(s);
-  tree.position.set(x, 0, z);
-  scene.add(tree);
+// ---------- Terreno ----------
+// Plano donde se juega (cerca del origen) y la forma del bioma hacia afuera.
+const PLAY_CENTER_Z = -15;
+function terrainHeight(x, z) {
+  const d = Math.hypot(x, z - PLAY_CENTER_Z);
+  const hills = THREE.MathUtils.smoothstep(d, 50, 140);
+  const ripple = Math.max(0, fbm(x * 0.05, z * 0.05) - 0.55) * 0.6 * THREE.MathUtils.smoothstep(d, 15, 35);
+  const base = hills * BIOME.shape(x, z, fbm(x * 0.011, z * 0.011)) + (1 - hills) * ripple;
+  return BIOME.terrain ? BIOME.terrain(x, z, d, base) : base;
 }
+const SEA_LEVEL = -0.4;
 
-// Nubes
-const cloudMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-const clouds = [];
-for (let i = 0; i < 18; i++) {
-  const c = new THREE.Group();
-  const n = 3 + Math.floor(Math.random() * 3);
-  for (let j = 0; j < n; j++) {
-    const puff = new THREE.Mesh(new THREE.SphereGeometry(3 + Math.random() * 3, 10, 8), cloudMat);
-    puff.position.set(j * 4 - n * 2, Math.random() * 2, Math.random() * 3);
-    c.add(puff);
+{
+  const geo = new THREE.PlaneGeometry(1800, 1800, 240, 240);
+  geo.rotateX(-Math.PI / 2);
+  const p = geo.attributes.position;
+  const colors = new Float32Array(p.count * 3);
+  const G = BIOME.ground;
+  const base = new THREE.Color(G.base), dark = new THREE.Color(G.dark), dry = new THREE.Color(G.dry);
+  const far = G.far != null ? new THREE.Color(G.far) : null;
+  const under = G.under != null ? new THREE.Color(G.under) : null;
+  const c = new THREE.Color();
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    const h = terrainHeight(x, z);
+    p.setY(i, h);
+    const d = Math.hypot(x, z - PLAY_CENTER_Z);
+    // Color: manchas, más seco/claro en lo alto
+    const patch = fbm(x * 0.04 + 50, z * 0.04);
+    c.copy(base).lerp(dark, clamp(patch - 0.35, 0, 1) * 0.9);
+    c.lerp(dry, clamp(h / 22, 0, 0.75) + clamp(fbm(x * 0.02, z * 0.02 + 9) - 0.6, 0, 1) * 0.8);
+    if (far) c.lerp(far, THREE.MathUtils.smoothstep(d, 75, 110) * 0.85);       // ciudad: pavimento
+    if (under && h < 0.1) c.lerp(under, clamp((0.1 - h) / 1.5, 0, 1));          // arena mojada / fondo
+    colors.set([c.r, c.g, c.b], i * 3);
   }
-  c.position.set((Math.random() - 0.5) * 300, 45 + Math.random() * 50, -40 - Math.random() * 200);
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  ground.receiveShadow = true;
+  scene.add(ground);
+}
+
+// Mar (playa y cerros)
+let sea = null;
+if (BIOME.sea) {
+  sea = new THREE.Mesh(
+    new THREE.PlaneGeometry(4000, 4000),
+    new THREE.MeshPhongMaterial({ color: 0x2a7fb3, specular: 0x9cc8e8, shininess: 80, transparent: true, opacity: 0.9 })
+  );
+  sea.rotation.x = -Math.PI / 2;
+  sea.position.y = SEA_LEVEL;
+  scene.add(sea);
+}
+
+// Cordillera al fondo (con nieve arriba)
+if (BIOME.mountains) {
+  const MT = BIOME.mountains;
+  const W = 2400, D = 420;
+  const geo = new THREE.PlaneGeometry(W, D, 300, 60);
+  geo.rotateX(-Math.PI / 2);
+  const p = geo.attributes.position;
+  const colors = new Float32Array(p.count * 3);
+  const rock = new THREE.Color(MT.rock), rockDark = new THREE.Color(MT.dark), snow = new THREE.Color(0xf4f8fc), c = new THREE.Color();
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i);
+    const back = (D / 2 - z) / D;                       // 0 al frente, 1 al fondo
+    const ridge = 1 - Math.abs(fbm(x * 0.004, z * 0.006, 5) * 2 - 1);   // crestas
+    const h = Math.pow(ridge, 1.6) * (40 + back * 260) * MT.height * THREE.MathUtils.smoothstep(back, 0, 0.35);
+    p.setY(i, h - 10);
+    const snowLine = MT.snowLine + (fbm(x * 0.02, z * 0.02) - 0.5) * 60;
+    c.copy(rock).lerp(rockDark, fbm(x * 0.03, z * 0.03));
+    if (h > snowLine) c.lerp(snow, clamp((h - snowLine) / 25, 0, 1));
+    c.lerp(SKY_HORIZON, 0.3);                           // un poco de 'aire' por la distancia
+    colors.set([c.r, c.g, c.b], i * 3);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  const mountains = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, fog: false }));
+  mountains.position.set(0, 0, -560 - D / 2);
+  scene.add(mountains);
+}
+
+// Volcán nevado (bosque del sur y desierto)
+if (BIOME.volcano) {
+  const H = 300, geo = new THREE.ConeGeometry(230, H, 64, 12, true);
+  const p = geo.attributes.position;
+  const colors = new Float32Array(p.count * 3);
+  const rock = new THREE.Color(BIOME.mountains.dark), snow = new THREE.Color(0xf6f9fc), c = new THREE.Color();
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i) + H / 2;                         // 0 abajo, H arriba
+    const ang = Math.atan2(p.getZ(i), p.getX(i));
+    const line = H * (0.6 + Math.sin(ang * 7) * 0.05);  // nieve con borde irregular
+    c.copy(rock);
+    if (y > line) c.lerp(snow, clamp((y - line) / 20, 0, 1));
+    c.lerp(SKY_HORIZON, 0.3);
+    colors.set([c.r, c.g, c.b], i * 3);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  const volcano = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, fog: false }));
+  volcano.position.set(-220, H / 2 - 20, -720);
+  scene.add(volcano);
+}
+
+// ---------- Objetos instanciados (árboles, cactus, casas, edificios, rocas, pasto) ----------
+// Todas las copias de una misma pieza se dibujan juntas: así se pueden poner cientos sin ponerse lento.
+const instGroups = new Map();
+const _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new V3(), _p = new V3(), _c = new THREE.Color();
+const UNIT = {
+  cyl: new THREE.CylinderGeometry(1, 1, 1, 7),
+  cone: new THREE.ConeGeometry(1, 1, 7),
+  blob: new THREE.IcosahedronGeometry(1, 1),
+  leaf: new THREE.ConeGeometry(1, 1, 4),
+  box: new THREE.BoxGeometry(1, 1, 1),
+  roof: new THREE.ConeGeometry(1, 1, 4),
+  rock: new THREE.DodecahedronGeometry(1, 0),
+  tuft: new THREE.ConeGeometry(0.07, 0.38, 3).translate(0, 0.19, 0),
+  flower: new THREE.IcosahedronGeometry(0.06, 0),
+};
+const MAT = {
+  smooth: new THREE.MeshLambertMaterial({ color: 0xffffff }),
+  flat: new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }),
+};
+function M(px, py, pz, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz = sx) {
+  return new THREE.Matrix4().compose(_p.set(px, py, pz), _q.setFromEuler(_e.set(rx, ry, rz)), _s.set(sx, sy, sz));
+}
+function addInst(geoKey, matKey, matrix, color, shadow = true) {
+  const key = geoKey + '|' + matKey;
+  if (!instGroups.has(key)) instGroups.set(key, { geo: UNIT[geoKey], mat: MAT[matKey], items: [], shadow });
+  instGroups.get(key).items.push([matrix, color]);
+}
+function flushInst() {
+  for (const g of instGroups.values()) {
+    const mesh = new THREE.InstancedMesh(g.geo, g.mat, g.items.length);
+    g.items.forEach(([m, col], i) => { mesh.setMatrixAt(i, m); mesh.setColorAt(i, _c.set(col)); });
+    mesh.castShadow = g.shadow;
+    mesh.frustumCulled = false;   // las copias están repartidas por todo el mapa
+    scene.add(mesh);
+  }
+}
+const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+
+// Cada tipo de objeto: se arma con piezas relativas a su base (matriz T)
+const PROPS = {
+  pine(T) {
+    addInst('cyl', 'smooth', T.clone().multiply(M(0, 1, 0, 0, 0, 0, 0.27, 2, 0.27)), 0x6e4a2b);
+    [[1.8, 3], [1.4, 2.6], [1.0, 2.2]].forEach(([r, h], i) =>
+      addInst('cone', 'flat', T.clone().multiply(M(0, 2.6 + i * 1.3, 0, 0, 0, 0, r, h, r)), pick([0x2b6b35, 0x2f7438, 0x275f30])));
+  },
+  round(T) {
+    addInst('cyl', 'smooth', T.clone().multiply(M(0, 1.2, 0, 0, 0, 0, 0.27, 2.4, 0.27)), 0x6e4a2b);
+    const col = pick([0x3f8a3a, 0x4d9a3f, 0x5a8f2f]);
+    for (let i = 0; i < 3; i++) {
+      const s = 1.2 + Math.random() * 0.7;
+      addInst('blob', 'flat', T.clone().multiply(M((Math.random() - 0.5) * 1.4, 3.2 + Math.random() * 1.2, (Math.random() - 0.5) * 1.4, 0, 0, 0, s)), col);
+    }
+  },
+  palm(T) {
+    const h = 6 + Math.random() * 3, lean = (Math.random() - 0.5) * 2.5, segs = 6;
+    for (let i = 0; i < segs; i++) {
+      const t0 = i / segs, t1 = (i + 1) / segs;
+      const x0 = lean * t0 * t0, x1 = lean * t1 * t1;
+      const ang = Math.atan2(x1 - x0, h / segs);
+      addInst('cyl', 'smooth', T.clone().multiply(M((x0 + x1) / 2, (t0 + t1) / 2 * h, 0, 0, 0, -ang, 0.2 - t0 * 0.06, h / segs + 0.05, 0.2 - t0 * 0.06)), 0x8a6a45);
+    }
+    const top = new V3(lean, h, 0), up = new V3(0, 1, 0);
+    for (let k = 0; k < 8; k++) {
+      const a = k / 8 * Math.PI * 2 + Math.random() * 0.3, droop = 0.25 + Math.random() * 0.35;
+      const dir = new V3(Math.cos(a) * Math.cos(droop), -Math.sin(droop), Math.sin(a) * Math.cos(droop)).normalize();
+      const m = new THREE.Matrix4().compose(top.clone().addScaledVector(dir, 1.6), new THREE.Quaternion().setFromUnitVectors(up, dir), new V3(0.45, 3.2, 0.08));
+      addInst('leaf', 'flat', T.clone().multiply(m), pick([0x3d8a3a, 0x4a9a40]));
+    }
+  },
+  cactus(T) {
+    const H = 2.5 + Math.random() * 2.5, col = pick([0x5f8f4a, 0x6a9a50]);
+    addInst('cyl', 'smooth', T.clone().multiply(M(0, H / 2, 0, 0, 0, 0, 0.3, H, 0.3)), col);
+    [-1, 1].forEach(s => {
+      if (Math.random() < 0.25) return;
+      const y = H * (0.35 + Math.random() * 0.2), up = 0.8 + Math.random() * 0.8;
+      addInst('cyl', 'smooth', T.clone().multiply(M(s * 0.45, y, 0, 0, 0, Math.PI / 2, 0.18, 0.7, 0.18)), col);
+      addInst('cyl', 'smooth', T.clone().multiply(M(s * 0.8, y + up / 2, 0, 0, 0, 0, 0.18, up, 0.18)), col);
+    });
+  },
+  house(T) {
+    const w = 3 + Math.random() * 2, h = 2.5 + Math.random() * 2.5;
+    addInst('box', 'smooth', T.clone().multiply(M(0, h / 2, 0, 0, 0, 0, w, h, w * 0.9)),
+      pick([0xe8423c, 0xf2c12e, 0x3ba3d9, 0x6cc070, 0xf28c28, 0xd95fa8, 0xf4f1e8, 0x8f5fd9]));
+    addInst('roof', 'flat', T.clone().multiply(M(0, h + 0.6, 0, 0, Math.PI / 4, 0, w * 0.78, 1.2, w * 0.72)), pick([0x8a3a2a, 0x6a6a6a, 0xa85a3a]));
+  },
+  building(T) {
+    const w = 8 + Math.random() * 10, d = 8 + Math.random() * 10, h = 10 + Math.pow(Math.random(), 2) * 55;
+    addInst('box', 'smooth', T.clone().multiply(M(0, h / 2, 0, 0, 0, 0, w, h, d)), pick([0xb8b4aa, 0x9aa3ad, 0xd8d0bf, 0x8a8f96, 0xc9c2b2]));
+    if (Math.random() < 0.4) addInst('box', 'smooth', T.clone().multiply(M(0, h + 1.2, 0, 0, 0, 0, w * 0.4, 2.4, d * 0.4)), 0x707478);
+  },
+  rock(T) {
+    const s = 0.4 + Math.random() * 1.6;
+    addInst('rock', 'flat', T.clone().multiply(M(0, s * 0.3, 0, Math.random() * 3, Math.random() * 3, 0, s, s * 0.7, s)), pick([0x8a6248, 0x9a7458, 0x6f4f3c]));
+  },
+};
+
+function baseMatrix(x, z, scale) {
+  return M(x, terrainHeight(x, z) - 0.05, z, 0, Math.random() * Math.PI * 2, 0, scale);
+}
+const nearPlayers = (x, z, r) => Math.hypot(x, z - PLAY_CENTER_Z) < r || RIVALS.some(rv => Math.hypot(x - rv.at[0], z - rv.at[2]) < 8);
+
+// Árboles / cactus / palmeras
+if (BIOME.props) {
+  const P = BIOME.props;
+  let placed = 0;
+  for (let tries = 0; placed < P.count && tries < P.count * 25; tries++) {
+    const x = (Math.random() - 0.5) * 460, z = 30 - Math.random() * 360;
+    const d = Math.hypot(x, z - PLAY_CENTER_Z);
+    if (nearPlayers(x, z, P.minDist ?? 28) || (P.maxDist && d > P.maxDist)) continue;
+    if (P.behindOnly && z < -28) continue;                                     // playa: solo en la arena
+    if (P.clustered && fbm(x * 0.03, z * 0.03 + 4) < 0.45) continue;          // en grupitos
+    if (terrainHeight(x, z) < 0.2 && BIOME.sea) continue;
+    PROPS[pick(P.kinds)](baseMatrix(x, z, 0.8 + Math.random() * 0.9));
+    placed++;
+  }
+}
+// Casas de colores en los cerros
+for (let i = 0, tries = 0; i < (BIOME.houses || 0) && tries < 8000; tries++) {
+  const x = (Math.random() - 0.5) * 700, z = 60 - Math.random() * 320;
+  const h = terrainHeight(x, z);
+  if (nearPlayers(x, z, 60) || h < 4) continue;
+  PROPS.house(baseMatrix(x, z, 1)); i++;
+}
+// Edificios de la ciudad (lejos del parque donde se juega)
+for (let i = 0, tries = 0; i < (BIOME.buildings || 0) && tries < 5000; tries++) {
+  const a = Math.random() * Math.PI * 2, r = 110 + Math.random() * 360;
+  const x = Math.cos(a) * r, z = PLAY_CENTER_Z + Math.sin(a) * r;
+  if (z > 60) continue;
+  PROPS.building(baseMatrix(x, z, 1)); i++;
+}
+// Rocas (desierto)
+for (let i = 0; i < (BIOME.rocks || 0); i++) {
+  const x = (Math.random() - 0.5) * 400, z = 40 - Math.random() * 300;
+  if (nearPlayers(x, z, 12)) continue;
+  PROPS.rock(baseMatrix(x, z, 1));
+}
+// Pasto y florcitas cerca del área de juego
+{
+  const G = BIOME.grass;
+  for (let i = 0; i < (G?.count || 0); i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 55;
+    const x = Math.cos(a) * r, z = PLAY_CENTER_Z + Math.sin(a) * r;
+    if (G.behindOnly && z < -30) continue;
+    if (BIOME.sea && terrainHeight(x, z) < 0.05) continue;
+    const k = 0.6 + Math.random() * 0.9;
+    addInst('tuft', 'smooth', M(x, terrainHeight(x, z), z, (Math.random() - 0.5) * 0.5, Math.random() * 3, (Math.random() - 0.5) * 0.5, k, k * (0.7 + Math.random() * 0.8), k),
+      _c.setHSL(G.hue + Math.random() * 0.06, 0.5, G.light + Math.random() * 0.14).getHex(), false);
+  }
+  for (let i = 0; i < (BIOME.flowers || 0); i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * 50;
+    const x = Math.cos(a) * r, z = PLAY_CENTER_Z + Math.sin(a) * r;
+    addInst('flower', 'smooth', M(x, terrainHeight(x, z) + 0.25 + Math.random() * 0.1, z), Math.random() < 0.6 ? 0xffd93b : 0xffffff, false);
+  }
+}
+flushInst();
+
+// ---------- Nubes esponjosas ----------
+// Cada nube es un grupo de "motas" (sprites con textura suave); las de abajo un poco más grises.
+function makePuffTexture() {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const g = cv.getContext('2d');
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.45, 'rgba(255,255,255,0.85)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const puffTex = makePuffTexture();
+const grayC = new THREE.Color(0x9aa4b0);
+const puffMats = [0xffffff, 0xf2f5f9, 0xdde4ec].map(c =>
+  new THREE.SpriteMaterial({ map: puffTex, color: new THREE.Color(c).lerp(grayC, BIOME.clouds.gray), transparent: true, depthWrite: false, opacity: 0.92 }));
+
+const clouds = [];
+const CLOUD_Z = [-700, 120];
+for (let i = 0; i < BIOME.clouds.count; i++) {
+  const c = new THREE.Group();
+  const w = 18 + Math.random() * 30, n = 9 + Math.floor(Math.random() * 8);
+  for (let j = 0; j < n; j++) {
+    const t = j / (n - 1);
+    const x = (t - 0.5) * w + (Math.random() - 0.5) * 6;
+    const hump = Math.sin(t * Math.PI);                       // más alta al centro
+    const y = Math.random() * 5 * hump;
+    const size = (8 + Math.random() * 8) * (0.6 + hump * 0.6);
+    const sp = new THREE.Sprite(puffMats[y < 1.5 ? 2 : y < 3 ? 1 : 0]);
+    sp.position.set(x, y, (Math.random() - 0.5) * 8);
+    sp.scale.set(size, size * 0.8, 1);
+    c.add(sp);
+  }
+  c.position.set((Math.random() - 0.5) * 700, 70 + Math.random() * 70, CLOUD_Z[0] + Math.random() * (CLOUD_Z[1] - CLOUD_Z[0]));
   scene.add(c);
   clouds.push(c);
 }
@@ -454,6 +827,7 @@ function createFlyer(o) {
     // IA
     mode: 'cruise', ready: false, readyTime: 0, restUntil: 0, attackEnd: 0, dive: false,
     sawPhase: Math.random() * 6, homeX: o.at[0] * 0.8,
+    wanderUntil: 0, wanderX: o.at[0] * 0.8, zigzag: false,
   };
   resetFlyer(f);
   return f;
@@ -544,6 +918,7 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyR') { resetFlyer(player); showMsg(''); }
+  if (e.code === 'KeyE') nextBiome();
 });
 addEventListener('keyup', e => keys[e.code] = false);
 // Click / toque sobre el escenario = tirar (cuenta los dedos para el multitáctil)
@@ -574,6 +949,16 @@ document.querySelectorAll('#touch button[data-key]').forEach(btn => {
   btn.addEventListener('lostpointercapture', up);
 });
 document.getElementById('btnReset').addEventListener('pointerdown', e => { e.preventDefault(); resetFlyer(player); showMsg(''); });
+document.getElementById('btnScene').addEventListener('pointerdown', e => { e.preventDefault(); nextBiome(); });
+
+// Escenario: nombre en el HUD, aviso al empezar, y cambio al siguiente (recarga la página con ?escenario=...)
+function nextBiome() {
+  const next = BIOME_KEYS[(BIOME_KEYS.indexOf(BIOME_KEY) + 1) % BIOME_KEYS.length];
+  try { localStorage.setItem('volantines.ultimoEscenario', next); } catch (e) {}
+  location.search = '?escenario=' + next;
+}
+document.getElementById('place').textContent = `📍 ${BIOME.name} · ${BIOME.place}`;
+setTimeout(() => showToast(`📍 ${BIOME.name} · ${BIOME.place}`), 400);
 addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouseDown = false; canvasPointers.clear(); });
 
@@ -628,7 +1013,8 @@ function updateWind(t) {
 }
 // Viento a una altura dada (más fuerte arriba)
 function windAt(y, out) {
-  return out.set(windBase.side, windBase.up, -windBase.fwd * (1 + Math.max(0, y) / 45));
+  const w = BIOME.wind;   // cada escenario tiene su viento (la playa sopla más)
+  return out.set(windBase.side * w, windBase.up, -windBase.fwd * w * (1 + Math.max(0, y) / 45));
 }
 
 const windAlertEl = document.getElementById('windAlert');
@@ -771,7 +1157,15 @@ function aiThink(f, dt) {
   }
 
   // 3) Objetivo: su lugar de paseo, o cruzar el hilo del jugador
-  let tx = f.homeX + Math.sin(time * 0.15 + f.phase) * 3;
+  // Paseo: cada cierto tiempo elige al azar un nuevo punto hacia un lado, o hace zigzag un rato
+  if (time > f.wanderUntil) {
+    f.wanderUntil = time + rand(st.wanderTime);
+    f.zigzag = Math.random() < st.zigChance;
+    f.wanderX = f.homeX + (Math.random() * 2 - 1) * st.wanderRange;
+  }
+  let tx = f.zigzag
+    ? f.homeX + Math.sin(time * st.zigFreq + f.phase) * st.wanderRange * 0.7
+    : f.wanderX;
   let ty = st.climbAlt;
   let tL = st.climbAlt * 1.4;
   if (f.mode === 'attack') {
@@ -900,17 +1294,28 @@ function updateCombat(dt) {
   }
 }
 
+// Cola: cadena verlet con harto roce del aire y una "forma de reposo" suave
+// (cuelga hacia abajo y hacia donde sopla el viento), para que no latiguee al dirigir.
+const TAIL_DAMP = 0.86;      // menos = la cola conserva menos impulso (más tranquila)
+const TAIL_SETTLE = 2.5;     // qué tan rápido vuelve a su forma de reposo
+const tailRest = new V3();
 function tailPhysics(f, dt, attach) {
   const tail = f.tail;
   tail[0].p.copy(attach);
+  tailRest.set(f.wind.x * 0.5, -4, f.wind.z * 0.5).normalize();
+  const settle = 1 - Math.exp(-TAIL_SETTLE * dt);
   for (let i = 1; i < TAIL_N; i++) {
     const t = tail[i];
-    const v = tmp.subVectors(t.p, t.o).multiplyScalar(0.96);
+    const v = tmp.subVectors(t.p, t.o).multiplyScalar(TAIL_DAMP);
     t.o.copy(t.p);
     t.p.add(v);
     t.p.x += f.wind.x * 0.9 * dt * dt;
     t.p.y += (-3 + f.wind.y * 0.9) * dt * dt;
     t.p.z += f.wind.z * 0.9 * dt * dt;
+    // Tira suavemente hacia la forma de reposo
+    t.p.x += (attach.x + tailRest.x * i * TAIL_SEG - t.p.x) * settle;
+    t.p.y += (attach.y + tailRest.y * i * TAIL_SEG - t.p.y) * settle;
+    t.p.z += (attach.z + tailRest.z * i * TAIL_SEG - t.p.z) * settle;
   }
   for (let it = 0; it < 4; it++) {
     for (let i = 1; i < TAIL_N; i++) {
@@ -973,7 +1378,7 @@ function updateFlyerVisuals(f, dt) {
   } else {
     k.lookAt(f.anchor);
     k.rotateX(-0.35);
-    k.rotateZ(-f.steerVis * 0.6 + Math.sin(time * 6 + f.phase) * 0.04);
+    k.rotateZ(-f.steerVis * 0.4 + Math.sin(time * 6 + f.phase) * 0.04);
   }
 
   // Cola
@@ -1029,11 +1434,15 @@ function updateVisuals(dt) {
   camera.position.copy(camPos);
   camera.lookAt(camTarget);
 
+  // Mar: oleaje suave
+  if (sea) sea.position.y = SEA_LEVEL + Math.sin(time * 0.8) * 0.06;
+
   // Nubes
   clouds.forEach(c => {
     c.position.z -= wind.length() * 0.02 * dt * 10;
     c.position.x += wind.x * 0.05 * dt;
-    if (c.position.z < -260) c.position.z = -40;
+    if (c.position.z < CLOUD_Z[0]) c.position.z += CLOUD_Z[1] - CLOUD_Z[0];
+    if (Math.abs(c.position.x) > 380) c.position.x = -Math.sign(c.position.x) * 370;
   });
 
   // Chispas en los puntos de contacto
