@@ -159,11 +159,45 @@ const STYLES = {
   },
 };
 
-const RIVALS = [
-  { name: 'el Pancho', style: 'rapido',    at: [-6, 0, -1], shirt: 0x2e9b4f, cap: 0xffffff, kite: [0x2e9b4f, 0xffffff, 0x2e9b4f, 0xffffff], tail: [0xffffff, 0x2e9b4f] },
-  { name: 'la Coni',   style: 'picada',    at: [6, 0, -2],  shirt: 0x7b3fb5, cap: 0xff8c1a, kite: [0xff8c1a, 0x7b3fb5, 0xff8c1a, 0x7b3fb5], tail: [0xff8c1a, 0x7b3fb5] },
-  { name: 'el Tito',   style: 'defensivo', at: [2, 0, -9],  shirt: 0x333333, cap: 0xffd500, kite: [0x111111, 0xffd500, 0x111111, 0xffd500], tail: [0xffd500, 0x111111] },
+// Grupo de posibles rivales: en cada partida salen 3 o 4 al azar, en posiciones distintas.
+const RIVAL_POOL = [
+  { name: 'el Pancho', style: 'rapido',    shirt: 0x2e9b4f, cap: 0xffffff, kite: [0x2e9b4f, 0xffffff, 0x2e9b4f, 0xffffff], tail: [0xffffff, 0x2e9b4f] },
+  { name: 'la Coni',   style: 'picada',    shirt: 0x7b3fb5, cap: 0xff8c1a, kite: [0xff8c1a, 0x7b3fb5, 0xff8c1a, 0x7b3fb5], tail: [0xff8c1a, 0x7b3fb5] },
+  { name: 'el Tito',   style: 'defensivo', shirt: 0x333333, cap: 0xffd500, kite: [0x111111, 0xffd500, 0x111111, 0xffd500], tail: [0xffd500, 0x111111] },
+  { name: 'la Javi',   style: 'rapido',    shirt: 0xd62839, cap: 0x222222, kite: [0xd62839, 0xffffff, 0xd62839, 0xffffff], tail: [0xffffff, 0xd62839] },
+  { name: 'el Nacho',  style: 'picada',    shirt: 0x1f6fd1, cap: 0xffffff, kite: [0x1f6fd1, 0xffffff, 0xd62839, 0xffffff], tail: [0x1f6fd1, 0xd62839] },
+  { name: 'la Fran',   style: 'defensivo', shirt: 0xe86fb0, cap: 0x5a2a82, kite: [0xe86fb0, 0x5a2a82, 0xe86fb0, 0x5a2a82], tail: [0x5a2a82, 0xe86fb0] },
 ];
+
+// Posiciones al azar cerca del jugador (que está en 0,0), pero sin quedar pegados entre ellos.
+const RIVAL_SPOT = { minSep: 4.5, maxDist: 12, x: [-11, 11], z: [-11, 2] };
+function chooseRivals() {
+  const count = Math.random() < 0.5 ? 3 : 4;
+  // Mezcla el grupo y toma los primeros, con máximo 2 del mismo estilo para que haya variedad
+  const shuffled = [...RIVAL_POOL].sort(() => Math.random() - 0.5);
+  const chosen = [], perStyle = {};
+  for (const r of shuffled) {
+    if (chosen.length >= count) break;
+    if ((perStyle[r.style] || 0) >= 2) continue;
+    perStyle[r.style] = (perStyle[r.style] || 0) + 1;
+    chosen.push({ ...r });
+  }
+  const spots = [[0, 0]];   // el jugador
+  for (const r of chosen) {
+    let x, z;
+    for (let tries = 0; tries < 300; tries++) {
+      x = RIVAL_SPOT.x[0] + Math.random() * (RIVAL_SPOT.x[1] - RIVAL_SPOT.x[0]);
+      z = RIVAL_SPOT.z[0] + Math.random() * (RIVAL_SPOT.z[1] - RIVAL_SPOT.z[0]);
+      if (Math.hypot(x, z) > RIVAL_SPOT.maxDist) continue;
+      if (Math.abs(x) < 3 && z < -3) continue;   // no pararse justo delante, bajo tu hilo
+      if (spots.every(([sx, sz]) => Math.hypot(x - sx, z - sz) >= RIVAL_SPOT.minSep)) break;
+    }
+    spots.push([x, z]);
+    r.at = [+x.toFixed(1), 0, +z.toFixed(1)];
+  }
+  return chosen;
+}
+const RIVALS = chooseRivals();
 
 // ---------- Escenarios (biomas de Chile) ----------
 // Cada vez que se abre el juego se elige uno al azar (sin repetir el anterior).
