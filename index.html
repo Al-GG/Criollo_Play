@@ -862,6 +862,7 @@ function createFlyer(o) {
     mode: 'cruise', ready: false, readyTime: 0, restUntil: 0, attackEnd: 0, dive: false,
     sawPhase: Math.random() * 6, homeX: o.at[0] * 0.8,
     wanderUntil: 0, wanderX: o.at[0] * 0.8, zigzag: false,
+    roll: null, rollAngle: 0, rollPush: 0, nextRollAt: 5 + Math.random() * 10,
   };
   resetFlyer(f);
   return f;
@@ -1101,7 +1102,7 @@ function stepFlyer(f, dt) {
   force.set(0, 0, 0);
   force.addScaledVector(rel.normalize(), DRAG * q);         // arrastre
   force.y += LIFT * q * liftFactor;                         // sustentación
-  if (!free) force.x += f.steerIn * SIDE * q;               // dirección
+  if (!free) force.x += (f.steerIn + f.rollPush) * SIDE * q;  // dirección (+ empujón al girar como rueda)
   force.y -= MASS * 9.8;                                    // gravedad
 
   f.vel.addScaledVector(force, dt / MASS);
@@ -1139,6 +1140,32 @@ function stepFlyer(f, dt) {
   }
 
   f.maxAlt = Math.max(f.maxAlt, f.pos.y);
+}
+
+// ---------- Giros de rueda ----------
+// Cada cierto tiempo (al azar) cada volantín da una o dos vueltas completas como rueda,
+// hacia la izquierda o la derecha, y en ese rato se corre un poco hacia ese lado.
+const ROLL_EVERY = [8, 18];     // segundos entre giros [mín, máx]
+const ROLL_TIME = [0.9, 1.5];   // duración de un giro [mín, máx]
+const ROLL_PUSH = 0.5;          // cuánto lo corre hacia el lado (0 = solo visual)
+function updateRoll(f) {
+  if (f.state !== 'flying' || f.pos.y < 6) {
+    f.roll = null; f.rollAngle = 0; f.rollPush = 0;
+    return;
+  }
+  if (!f.roll && time > f.nextRollAt) {
+    f.roll = { start: time, dur: rand(ROLL_TIME), dir: Math.random() < 0.5 ? -1 : 1, turns: Math.random() < 0.3 ? 2 : 1 };
+  }
+  if (!f.roll) return;
+  const t = (time - f.roll.start) / f.roll.dur;
+  if (t >= 1) {
+    f.roll = null; f.rollAngle = 0; f.rollPush = 0;
+    f.nextRollAt = time + rand(ROLL_EVERY);
+    return;
+  }
+  const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;   // parte y termina suave
+  f.rollAngle = f.roll.dir * f.roll.turns * Math.PI * 2 * ease;
+  f.rollPush = f.roll.dir * Math.sin(Math.PI * t) * ROLL_PUSH;
 }
 
 // ---------- IA de los rivales ----------
@@ -1412,7 +1439,7 @@ function updateFlyerVisuals(f, dt) {
   } else {
     k.lookAt(f.anchor);
     k.rotateX(-0.35);
-    k.rotateZ(-f.steerVis * 0.4 + Math.sin(time * 6 + f.phase) * 0.04);
+    k.rotateZ(-f.steerVis * 0.4 + Math.sin(time * 6 + f.phase) * 0.04 + f.rollAngle);
   }
 
   // Cola
@@ -1555,6 +1582,7 @@ function loop() {
   if (player.state !== 'flying') player.steerT = 0;
 
   rivals.forEach(r => aiThink(r, frame));
+  flyers.forEach(updateRoll);
 
   const steps = 4;
   for (let i = 0; i < steps; i++) {
