@@ -345,7 +345,7 @@ function animateRig(f, dt) {
   const pull = f.pullIn, give = f.releaseIn, st = f.steerVis, t = time + f.phase;
   const breath = Math.sin(t * 2.2) * 0.015;
   const tug = Math.sin(t * 10) * 0.1 * pull;            // tironcitos al tirar
-  const hasString = f.state !== 'cut';
+  const hasString = f.state !== 'cut' && f.state !== 'resting';
 
   // Brazo derecho: sostiene el hilo (si se cortó, lo baja)
   rig.armR.shoulder.rotation.x = hasString ? 1.2 - 0.5 * pull + 0.25 * give + tug + breath : 0.3;
@@ -427,10 +427,24 @@ function createFlyer(o) {
     bows.push({ mesh: b, idx: i });
   }
 
+  // Resaltado cuando este volantín te ataca: anillo rojo + flecha encima (se ven a través de todo)
+  const hl = new THREE.Group();
+  const hlMat = new THREE.MeshBasicMaterial({ color: 0xff2a2a, transparent: true, opacity: 0.9, depthTest: false, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.09, 8, 32), hlMat);
+  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.9, 4), hlMat);
+  arrow.rotation.x = Math.PI;      // apunta hacia abajo
+  arrow.position.y = 2.6;
+  hl.add(ring, arrow);
+  hl.renderOrder = 10;
+  hl.children.forEach(c => c.renderOrder = 10);
+  hl.visible = false;
+  scene.add(hl);
+
   const f = {
     name: o.name, isPlayer: !!o.isPlayer,
     styleName: o.style, style: STYLES[o.style], toughness: STYLES[o.style]?.toughness ?? 1,
-    rig, kite, stringGeo, tail, tailGeo, bows,
+    rig, kite, stringGeo, stringLine, tail, tailGeo, tailLine, bows, hl, ring, arrow,
+    active: true,   // si está "en juego" (los que no, descansan sin volantín)
     pts: Array.from({ length: STRING_PTS }, () => new V3()),
     anchor: new V3(o.at[0], 1.3, o.at[2] - 0.4),
     pos: new V3(), vel: new V3(), wind: new V3(),
@@ -637,9 +651,10 @@ function stepFlyer(f, dt) {
   f.pullIn += clamp(f.pullT - f.pullIn, -PULL_RAMP * 2 * dt, PULL_RAMP * dt);
   f.steerVis += (f.steerIn - f.steerVis) * Math.min(1, dt * 5);
 
+  if (f.state === 'resting') return;
   if (f.state === 'crashed') {
     f.timer -= dt;
-    if (f.timer <= 0) { resetFlyer(f); if (f.isPlayer) showMsg(''); }
+    if (f.timer <= 0) { relaunchOrRest(f); if (f.isPlayer) showMsg(''); }
     return;
   }
 
@@ -688,7 +703,7 @@ function stepFlyer(f, dt) {
   } else {
     f.spin += dt * 3;
     f.timer -= dt;
-    if (f.timer <= 0) { resetFlyer(f); if (f.isPlayer) showMsg(''); return; }
+    if (f.timer <= 0) { relaunchOrRest(f); if (f.isPlayer) showMsg(''); return; }
   }
 
   // Los rivales se "arman" (pueden chocar) una vez que despegan
@@ -713,6 +728,46 @@ function stepFlyer(f, dt) {
 // 2) Ya arriba, juega según su personalidad (ver STYLES).
 //    Rápido y pícaro salen a buscarte, pero de a uno a la vez; el defensivo solo responde si te acercas.
 let attacker = null;   // rival que está saliendo a buscarte ahora
+
+// ---------- Turnos: no todos los rivales elevan a la vez ----------
+// Cada ROSTER_TIME segundos se eligen al azar 1 o 2 rivales "en juego".
+// Los que salen recogen el hilo y descansan; los que entran suben su volantín desde cero.
+const ROSTER_TIME = [40, 70];
+let rosterChangeAt = 0;
+
+function setResting(f) {
+  f.state = 'resting';
+  f.mode = 'cruise';
+  f.vel.set(0, 0, 0);
+  const r = f.rig.root.position;
+  f.pos.set(r.x, 1.5, r.z - 5);   // para que el personaje mire hacia adelante
+}
+
+// Al terminar de caerse o de irse cortado: vuelve a subir si está en juego, si no, descansa
+function relaunchOrRest(f) {
+  if (f.isPlayer || f.active) resetFlyer(f);
+  else setResting(f);
+}
+
+function updateRoster() {
+  if (time < rosterChangeAt) return;
+  rosterChangeAt = time + rand(ROSTER_TIME);
+  const n = Math.random() < 0.5 ? 1 : 2;
+  const chosen = [...rivals].sort(() => Math.random() - 0.5).slice(0, n);
+  for (const f of rivals) {
+    const want = chosen.includes(f);
+    if (want && !f.active) {
+      f.active = true;
+      if (f.state === 'resting') resetFlyer(f);
+      if (time > 1) showToast(`${f.name} sale a elevar su volantín`);
+    } else if (!want && f.active) {
+      f.active = false;
+      if (time < 1) { setResting(f); continue; }      // al empezar: directo a descansar
+      if (f.state === 'flying') f.mode = 'leaving';   // recoge el hilo y se va
+      showToast(`${f.name} recoge su volantín`);
+    }
+  }
+}
 const rand = ([a, b]) => a + Math.random() * (b - a);
 
 function playerAttackable() {
@@ -724,6 +779,15 @@ function aiThink(f, dt) {
   const st = f.style, P = player;
   f.pullT = f.releaseT = f.steerT = 0;
   if (f.state !== 'flying') { if (attacker === f) attacker = null; return; }
+
+  // Saliendo del juego: recoge el hilo de a poco y, cuando lo tiene cerca, guarda el volantín
+  if (f.mode === 'leaving') {
+    if (attacker === f) attacker = null;
+    f.pullT = 0.8;
+    f.steerT = clamp(-f.vel.x * 0.2, -1, 1);
+    if (f.L <= 5 || f.pos.y < 3) setResting(f);
+    return;
+  }
 
   // 1) Subida: listo cuando se mantiene cerca de su altura un par de segundos
   if (!f.ready) {
@@ -775,13 +839,23 @@ function aiThink(f, dt) {
     const s = st.saw(Math.sin(time * st.sawFreq + f.sawPhase));
     f.pullT = s.pull || 0;
     f.releaseT = s.give || 0;
-  } else if (f.pos.y < 6 || f.vel.y < -1.5) {
-    f.pullT = 1;                                  // se está cayendo: tirar
-  } else if (dy > 2) {
-    if (f.L < tL) f.releaseT = 1;                 // le falta altura: dar hilo para que suba
-    else f.pullT = 0.6;
-  } else if (f.L < tL - 3 && dy > -2) {
-    f.releaseT = 0.5;
+  } else {
+    // Ángulo del volantín sobre el horizonte, visto desde la mano (0° = al ras, 90° = encima)
+    const d = f.pos.distanceTo(f.anchor) || 1;
+    const elev = Math.asin(clamp((f.pos.y - f.anchor.y) / d, -1, 1)) * 180 / Math.PI;
+    const taut = d > f.L - 0.3;
+    if (f.vel.y < -1.2 && f.L > 10 && elev < 55) {
+      f.pullT = 1;                                  // se está cayendo: tirar
+    } else if (f.pos.y < 6) {
+      // Despegando: tironcitos solo si no sube, sin acortar demasiado el hilo
+      f.pullT = f.L > 6 && f.vel.y < 0.5 ? 0.8 : 0;
+    } else if (dy > 2 && taut && elev > 40 && f.L < tL) {
+      f.releaseT = 1;                               // va firme y alto: dar hilo para que suba más
+    } else if (dy > 2 && elev < 35) {
+      f.pullT = 0.4;                                // está muy echado: tirar un poco para levantarlo
+    } else if (dy < -3 && f.L > 10) {
+      f.pullT = 0.7;                                // tiene que bajar: recoger hilo
+    }
   }
 
   // 5) Dirección, con la agilidad de su estilo
@@ -929,6 +1003,13 @@ function updateFlyerVisuals(f, dt) {
   r.updateMatrixWorld(true);
   f.rig.armR.hand.getWorldPosition(f.anchor);
 
+  // Descansando: sin volantín, hilo ni cola
+  const flyingVis = f.state !== 'resting';
+  f.kite.visible = f.stringLine.visible = f.tailLine.visible = flyingVis;
+  f.bows.forEach(b => b.mesh.visible = flyingVis);
+  updateHighlight(f);
+  if (!flyingVis) return;
+
   // Volantín: mira a su dueño, con giro según dirección (o da vueltas si está cortado)
   const k = f.kite;
   k.position.copy(f.pos);
@@ -960,6 +1041,22 @@ function updateFlyerVisuals(f, dt) {
   const sp = f.stringGeo.attributes.position;
   f.pts.forEach((p, i) => sp.setXYZ(i, p.x, p.y, p.z));
   sp.needsUpdate = true;
+}
+
+// Resalta el volantín que te está atacando: anillo y flecha rojos que laten,
+// de tamaño parejo aunque esté lejos, y su hilo se pone rojo.
+function updateHighlight(f) {
+  const on = !f.isPlayer && f.state === 'flying' && f.mode === 'attack';
+  f.hl.visible = on;
+  f.stringLine.material.color.set(on ? 0xff4040 : 0xffffff);
+  if (!on) return;
+  const pulse = 1 + Math.sin(time * 8) * 0.12;
+  const scale = Math.max(1, camera.position.distanceTo(f.pos) / 22) * pulse;
+  f.hl.position.copy(f.pos);
+  f.hl.scale.setScalar(scale);
+  f.ring.lookAt(camera.position);
+  f.arrow.position.y = 2.6 + Math.sin(time * 5) * 0.3;
+  f.ring.material.opacity = 0.65 + Math.sin(time * 8) * 0.25;
 }
 
 const el = id => document.getElementById(id);
@@ -1037,7 +1134,8 @@ function updateVisuals(dt) {
   const climbing = rivals.filter(r => r.state === 'flying' && !r.ready).length;
   const threat = rivals.find(r => r.mode === 'attack');
   el('threat').textContent = threat ? `⚠️ Te ataca ${threat.name} (${threat.style.label})`
-    : climbing ? `Rivales subiendo: ${climbing}` : 'Rivales arriba, atentos...';
+    : climbing ? `Rivales subiendo: ${climbing}`
+    : rivals.some(r => r.state !== 'resting') ? 'Rivales arriba, atentos...' : 'Cielo libre... por ahora';
 
   // Panel de duelo cuando el jugador está enredado
   const foe = engagedWith(player);
@@ -1061,6 +1159,7 @@ function loop() {
   player.steerT = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
   if (player.state !== 'flying') player.steerT = 0;
 
+  updateRoster();
   rivals.forEach(r => aiThink(r, frame));
 
   const steps = 4;
