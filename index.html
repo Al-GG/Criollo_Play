@@ -125,25 +125,25 @@ const clamp = THREE.MathUtils.clamp;
 //  climbAlt   altura a la que sube antes de atacar
 //  steerGain  qué tan rápido mueve el volantín hacia su objetivo; steerDamp lo frena (más = más suave)
 //  toughness  qué tan curado está su hilo (más = aguanta más el serrucho)
-//  attackTime cuánto dura un ataque; rest = pausa entre ataques [mín, máx]
+//  attackTime cuánto dura un ataque; rest = pausa mínima entre ataques [mín, máx]; eagerness = ganas de atacar
 //  sawFreq / saw  ritmo y forma de serruchar cuando está enredado
 const STYLES = {
   // Rápido: ataques cortos y seguidos, se mueve ligero y serrucha con tirones, pero su hilo es más débil
   rapido: {
     label: 'rápido', climbAlt: 30, steerGain: 0.22, steerDamp: 0.18, toughness: 0.75,
-    attackTime: 10, rest: [3, 5], sawFreq: 7,
+    attackTime: 10, rest: [4, 8], eagerness: 1.6, sawFreq: 7,
     saw: w => w > -0.5 ? { pull: 1 } : { give: 0.6 },
   },
   // Pícaro: se pone por encima de tu volantín y se tira en picada para cruzar el hilo; serrucha dando hilo
   picada: {
     label: 'pícaro', climbAlt: 36, steerGain: 0.15, steerDamp: 0.25, toughness: 1.0,
-    attackTime: 16, rest: [6, 9], sawFreq: 2.5,
+    attackTime: 16, rest: [8, 14], eagerness: 1.0, sawFreq: 2.5,
     saw: w => w > 0 ? { give: 1 } : { pull: 0.6 },
   },
-  // Defensivo: sube alto y se queda quieto; no te busca, pero si te acercas se defiende con hilo muy curado
+  // Defensivo: sube alto y casi nunca te busca, pero si te acercas se defiende con hilo muy curado
   defensivo: {
     label: 'defensivo', climbAlt: 40, steerGain: 0.1, steerDamp: 0.35, toughness: 1.5,
-    counterDist: 12, sawFreq: 1.5,
+    counterDist: 12, attackTime: 12, rest: [15, 25], eagerness: 0.4, sawFreq: 1.5,
     saw: () => ({ pull: 0.75 }),
   },
 };
@@ -345,7 +345,7 @@ function animateRig(f, dt) {
   const pull = f.pullIn, give = f.releaseIn, st = f.steerVis, t = time + f.phase;
   const breath = Math.sin(t * 2.2) * 0.015;
   const tug = Math.sin(t * 10) * 0.1 * pull;            // tironcitos al tirar
-  const hasString = f.state !== 'cut' && f.state !== 'resting';
+  const hasString = f.state !== 'cut';
 
   // Brazo derecho: sostiene el hilo (si se cortó, lo baja)
   rig.armR.shoulder.rotation.x = hasString ? 1.2 - 0.5 * pull + 0.25 * give + tug + breath : 0.3;
@@ -444,7 +444,6 @@ function createFlyer(o) {
     name: o.name, isPlayer: !!o.isPlayer,
     styleName: o.style, style: STYLES[o.style], toughness: STYLES[o.style]?.toughness ?? 1,
     rig, kite, stringGeo, stringLine, tail, tailGeo, tailLine, bows, hl, ring, arrow,
-    active: true,   // si está "en juego" (los que no, descansan sin volantín)
     pts: Array.from({ length: STRING_PTS }, () => new V3()),
     anchor: new V3(o.at[0], 1.3, o.at[2] - 0.4),
     pos: new V3(), vel: new V3(), wind: new V3(),
@@ -651,10 +650,9 @@ function stepFlyer(f, dt) {
   f.pullIn += clamp(f.pullT - f.pullIn, -PULL_RAMP * 2 * dt, PULL_RAMP * dt);
   f.steerVis += (f.steerIn - f.steerVis) * Math.min(1, dt * 5);
 
-  if (f.state === 'resting') return;
   if (f.state === 'crashed') {
     f.timer -= dt;
-    if (f.timer <= 0) { relaunchOrRest(f); if (f.isPlayer) showMsg(''); }
+    if (f.timer <= 0) { resetFlyer(f); if (f.isPlayer) showMsg(''); }
     return;
   }
 
@@ -703,7 +701,7 @@ function stepFlyer(f, dt) {
   } else {
     f.spin += dt * 3;
     f.timer -= dt;
-    if (f.timer <= 0) { relaunchOrRest(f); if (f.isPlayer) showMsg(''); return; }
+    if (f.timer <= 0) { resetFlyer(f); if (f.isPlayer) showMsg(''); return; }
   }
 
   // Los rivales se "arman" (pueden chocar) una vez que despegan
@@ -724,50 +722,12 @@ function stepFlyer(f, dt) {
 }
 
 // ---------- IA de los rivales ----------
-// 1) Cada rival sube su volantín hasta su altura (30-40 m según su estilo).
-// 2) Ya arriba, juega según su personalidad (ver STYLES).
-//    Rápido y pícaro salen a buscarte, pero de a uno a la vez; el defensivo solo responde si te acercas.
-let attacker = null;   // rival que está saliendo a buscarte ahora
-
-// ---------- Turnos: no todos los rivales elevan a la vez ----------
-// Cada ROSTER_TIME segundos se eligen al azar 1 o 2 rivales "en juego".
-// Los que salen recogen el hilo y descansan; los que entran suben su volantín desde cero.
-const ROSTER_TIME = [40, 70];
-let rosterChangeAt = 0;
-
-function setResting(f) {
-  f.state = 'resting';
-  f.mode = 'cruise';
-  f.vel.set(0, 0, 0);
-  const r = f.rig.root.position;
-  f.pos.set(r.x, 1.5, r.z - 5);   // para que el personaje mire hacia adelante
-}
-
-// Al terminar de caerse o de irse cortado: vuelve a subir si está en juego, si no, descansa
-function relaunchOrRest(f) {
-  if (f.isPlayer || f.active) resetFlyer(f);
-  else setResting(f);
-}
-
-function updateRoster() {
-  if (time < rosterChangeAt) return;
-  rosterChangeAt = time + rand(ROSTER_TIME);
-  const n = Math.random() < 0.5 ? 1 : 2;
-  const chosen = [...rivals].sort(() => Math.random() - 0.5).slice(0, n);
-  for (const f of rivals) {
-    const want = chosen.includes(f);
-    if (want && !f.active) {
-      f.active = true;
-      if (f.state === 'resting') resetFlyer(f);
-      if (time > 1) showToast(`${f.name} sale a elevar su volantín`);
-    } else if (!want && f.active) {
-      f.active = false;
-      if (time < 1) { setResting(f); continue; }      // al empezar: directo a descansar
-      if (f.state === 'flying') f.mode = 'leaving';   // recoge el hilo y se va
-      showToast(`${f.name} recoge su volantín`);
-    }
-  }
-}
+// Los 3 rivales siempre están elevando, cada uno a su altura (30-40 m según su estilo).
+// Cada cierto tiempo, al azar, alguno va a tu altura a atacarte a su manera,
+// pero nunca más de MAX_ATTACKERS a la vez. El resto sigue paseando arriba.
+const MAX_ATTACKERS = 2;
+const ATTACK_CHANCE = 0.12;   // probabilidad por segundo de que un rival listo decida atacar (× su "ganas")
+const attackers = new Set();
 const rand = ([a, b]) => a + Math.random() * (b - a);
 
 function playerAttackable() {
@@ -775,42 +735,39 @@ function playerAttackable() {
   return started && P.state === 'flying' && P.pos.y > 10 && P.vel.y > -3;
 }
 
+function stopAttack(f) {
+  if (attackers.delete(f)) f.restUntil = time + rand(f.style.rest);
+  f.mode = 'cruise';
+  f.dive = false;
+}
+
 function aiThink(f, dt) {
   const st = f.style, P = player;
   f.pullT = f.releaseT = f.steerT = 0;
-  if (f.state !== 'flying') { if (attacker === f) attacker = null; return; }
-
-  // Saliendo del juego: recoge el hilo de a poco y, cuando lo tiene cerca, guarda el volantín
-  if (f.mode === 'leaving') {
-    if (attacker === f) attacker = null;
-    f.pullT = 0.8;
-    f.steerT = clamp(-f.vel.x * 0.2, -1, 1);
-    if (f.L <= 5 || f.pos.y < 3) setResting(f);
-    return;
-  }
+  if (f.state !== 'flying') { stopAttack(f); return; }
 
   // 1) Subida: listo cuando se mantiene cerca de su altura un par de segundos
   if (!f.ready) {
     f.readyTime = f.pos.y > st.climbAlt - 4 ? f.readyTime + dt : 0;
-    if (f.readyTime > 2) { f.ready = true; f.restUntil = time + rand(st.rest || [0, 0]); }
+    if (f.readyTime > 2) { f.ready = true; f.restUntil = time + rand(st.rest); }
   }
 
   // 2) ¿Ataca?
   const canHit = f.ready && playerAttackable();
   const foe = engagedWith(f);
-  if (st.counterDist) {
-    // Defensivo: solo va al choque si tu volantín se le acerca
-    f.mode = canHit && f.pos.distanceTo(P.pos) < st.counterDist ? 'attack' : 'cruise';
-  } else if (attacker === f) {
+  if (attackers.has(f)) {
     if (foe === P) f.attackEnd = Math.max(f.attackEnd, time + 2);   // enredado: no se rinde
-    if (!canHit || time > f.attackEnd) {
-      attacker = null; f.mode = 'cruise'; f.dive = false;
-      f.restUntil = time + rand(st.rest);
+    if (!canHit || time > f.attackEnd) stopAttack(f);
+  } else if (canHit && attackers.size < MAX_ATTACKERS && time > f.restUntil) {
+    // El defensivo además responde de inmediato si te le acercas
+    const provoked = st.counterDist && f.pos.distanceTo(P.pos) < st.counterDist;
+    if (provoked || Math.random() < ATTACK_CHANCE * st.eagerness * dt) {
+      attackers.add(f);
+      f.mode = 'attack';
+      f.dive = false;
+      f.attackEnd = time + st.attackTime;
+      showToast(provoked ? `¡${f.name} se defiende!` : `¡${f.name} (${st.label}) va por tu volantín!`);
     }
-  } else if (!attacker && canHit && time > f.restUntil) {
-    attacker = f; f.mode = 'attack'; f.dive = false;
-    f.attackEnd = time + st.attackTime;
-    showToast(`¡${f.name} (${st.label}) viene por tu volantín!`);
   }
 
   // 3) Objetivo: su lugar de paseo, o cruzar el hilo del jugador
@@ -1003,12 +960,7 @@ function updateFlyerVisuals(f, dt) {
   r.updateMatrixWorld(true);
   f.rig.armR.hand.getWorldPosition(f.anchor);
 
-  // Descansando: sin volantín, hilo ni cola
-  const flyingVis = f.state !== 'resting';
-  f.kite.visible = f.stringLine.visible = f.tailLine.visible = flyingVis;
-  f.bows.forEach(b => b.mesh.visible = flyingVis);
   updateHighlight(f);
-  if (!flyingVis) return;
 
   // Volantín: mira a su dueño, con giro según dirección (o da vueltas si está cortado)
   const k = f.kite;
@@ -1132,10 +1084,10 @@ function updateVisuals(dt) {
   el('score').textContent = score;
   el('lost').textContent = lost;
   const climbing = rivals.filter(r => r.state === 'flying' && !r.ready).length;
-  const threat = rivals.find(r => r.mode === 'attack');
-  el('threat').textContent = threat ? `⚠️ Te ataca ${threat.name} (${threat.style.label})`
+  const threats = rivals.filter(r => r.mode === 'attack');
+  el('threat').textContent = threats.length ? `⚠️ Te ataca: ${threats.map(r => r.name).join(' y ')}`
     : climbing ? `Rivales subiendo: ${climbing}`
-    : rivals.some(r => r.state !== 'resting') ? 'Rivales arriba, atentos...' : 'Cielo libre... por ahora';
+    : 'Rivales arriba, atentos...';
 
   // Panel de duelo cuando el jugador está enredado
   const foe = engagedWith(player);
@@ -1159,7 +1111,6 @@ function loop() {
   player.steerT = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
   if (player.state !== 'flying') player.steerT = 0;
 
-  updateRoster();
   rivals.forEach(r => aiThink(r, frame));
 
   const steps = 4;
