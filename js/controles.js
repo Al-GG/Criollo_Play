@@ -109,7 +109,7 @@ else labelsFrom = 0;
 
 // Escenario: nombre en el HUD, aviso al empezar, y cambio al siguiente (recarga la página con ?escenario=...)
 function nextBiome() {
-  if (NET.role) { showToast('En una sala no se puede cambiar el escenario'); return; }
+  if (NET.role) { showToast('Para cambiar de escenario, primero sal de la sala (👥 → Salir de la sala)'); return; }
   const next = BIOME_KEYS[(BIOME_KEYS.indexOf(BIOME_KEY) + 1) % BIOME_KEYS.length];
   try { localStorage.setItem('volantines.ultimoEscenario', next); } catch (e) {}
   location.search = '?escenario=' + next;

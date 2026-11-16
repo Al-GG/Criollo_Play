@@ -127,3 +127,4 @@ body.touch #btnNet { right: 180px; }
 #lobby .code { font-size: 22px; letter-spacing: 1px; color: #e0262b; }
 #lobby small { display: block; color: #777; line-height: 1.35; }
 #lobby .link { background: none; color: #555; margin-top: 10px; text-decoration: underline; }
+#lobby .leave { background: #555; }

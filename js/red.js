@@ -49,14 +49,41 @@ function loadPeerJS() {
 // ---------- Interfaz: sala ----------
 const lobbyEl = document.getElementById('lobby');
 function openLobby() {
-  if (NET.role === 'guest') { showToast('Ya estás en una sala'); return; }
+  refreshLobby();
   lobbyEl.hidden = false;
   lobbyOpen = true;
   keys.Space = false; mouseDown = false;
 }
+// Muestra "crear / unirse" o, si ya está en una sala, el código y el botón para salir
+function refreshLobby() {
+  const inRoom = !!NET.role;
+  document.getElementById('lobbyStart').hidden = inRoom;
+  document.getElementById('lobbyLeave').hidden = !inRoom;
+  if (NET.role === 'host') {
+    setNetStatus(`Tu sala: <b class="code">VOLA-${NET.code}</b><br>${NET.conns.size
+      ? 'Jugando con ' + [...NET.conns.values()].map(c => c.flyer.name).join(', ') + '.'
+      : 'Pásale este código a tus amigos. Esperando jugadores...'}`);
+  } else if (NET.role === 'guest') {
+    setNetStatus(NET.connected ? `Estás en la sala <b class="code">VOLA-${NET.code}</b> como ${player.name}.` : `Conectando a VOLA-${NET.code}...`);
+  }
+}
+
+// Salir de la sala: corta las conexiones y vuelve al juego normal en el mismo escenario y hora
+function netLeave() {
+  NET.leaving = true;
+  for (const { conn } of NET.conns.values()) conn.close();
+  NET.hostConn?.close();
+  NET.peer?.destroy();
+  backToSolo();
+}
+function backToSolo() {
+  location.href = `${location.pathname}?escenario=${BIOME_KEY}&hora=${TIME_KEY}`;
+}
+document.getElementById('lobbyLeave').addEventListener('click', netLeave);
 function closeLobby() { lobbyEl.hidden = true; lobbyOpen = false; }
 function setNetStatus(html) { document.getElementById('netStatus').innerHTML = html; }
 function updateNetHud() {
+  if (lobbyOpen) refreshLobby();   // si la ventana de sala está abierta, actualizar quién está
   const hud = document.getElementById('net');
   if (!NET.role) { hud.hidden = true; return; }
   hud.hidden = false;
@@ -151,7 +178,7 @@ async function netHost() {
       Object.assign(NET, { role: 'host', peer, code, myId: 'host', connected: true });
       player.netId = 'host';
       player.human = true;
-      setNetStatus(`Sala creada: <b class="code">VOLA-${code}</b><br>Pásale este código a tus amigos. Esperando jugadores...`);
+      refreshLobby();   // muestra el código y el botón para salir
       updateNetHud();
     });
     peer.on('connection', hostAccept);
@@ -241,7 +268,7 @@ async function netJoin(code) {
   peer.on('error', err => {
     if (err.type === 'peer-unavailable') {
       showMsg(`No existe la sala VOLA-${code}<small>Revisa el código. Volviendo al modo de un jugador...</small>`);
-      setTimeout(() => { location.href = location.pathname; }, 3500);
+      setTimeout(backToSolo, 3500);
     } else showToast('Problema de conexión: ' + err.type);
   });
 }
@@ -249,7 +276,7 @@ async function netJoin(code) {
 function guestOnData(msg) {
   if (msg.t === 'full') {
     showMsg('La sala está llena<small>Volviendo al modo de un jugador...</small>');
-    setTimeout(() => { location.href = location.pathname; }, 3500);
+    setTimeout(backToSolo, 3500);
   } else if (msg.t === 'info') {
     // Si el anfitrión juega en otro escenario u hora, recarga con los mismos
     if (msg.biome !== BIOME_KEY || msg.hora !== TIME_KEY) {
@@ -318,10 +345,10 @@ function guestApplySnap(msg) {
 }
 
 function guestLost() {
-  if (!NET.connected) return;
+  if (!NET.connected || NET.leaving) return;
   NET.connected = false;
   showMsg('Se perdió la conexión con la sala<small>Volviendo al modo de un jugador...</small>');
-  setTimeout(() => { location.href = location.pathname; }, 3500);
+  setTimeout(backToSolo, 3500);
 }
 
 // ---------- Cada cuadro ----------

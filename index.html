@@ -54,16 +54,20 @@
 <div id="lobby" hidden>
   <div class="box">
     <h2>Jugar con amigos</h2>
-    <button id="lobbyHost" class="wide">Crear sala</button>
-    <div class="or">o únete a la sala de un amigo</div>
-    <div class="join">
-      <span>VOLA-</span><input id="lobbyCode" inputmode="numeric" maxlength="4" placeholder="1234" autocomplete="off">
-      <button id="lobbyJoin">Unirse</button>
+    <div id="lobbyStart">
+      <button id="lobbyHost" class="wide">Crear sala</button>
+      <div class="or">o únete a la sala de un amigo</div>
+      <div class="join">
+        <span>VOLA-</span><input id="lobbyCode" inputmode="numeric" maxlength="4" placeholder="1234" autocomplete="off">
+        <button id="lobbyJoin">Unirse</button>
+      </div>
     </div>
     <p id="netStatus"></p>
+    <!-- Ya en una sala: salir y volver al juego normal -->
+    <button id="lobbyLeave" class="wide leave" hidden>Salir de la sala</button>
     <small>Se conectan directo de navegador a navegador. Cada amigo toma el lugar de un rival de la computadora.
       Algunas redes (empresas, datos móviles) pueden bloquear la conexión.</small>
-    <button id="lobbyClose" class="link">Cerrar</button>
+    <button id="lobbyClose" class="link">Cerrar ventana</button>
   </div>
 </div>
 
