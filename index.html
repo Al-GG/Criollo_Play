@@ -10,6 +10,7 @@
 <body>
 <div id="hud">
   <span id="place"></span><br>
+  <span id="net" hidden></span><br>
   Altura: <b id="alt">0</b> m<br>
   Máxima: <span id="max">0</span> m<br>
   Hilo: <span id="len">0</span> m &nbsp;<span class="bar"><i id="hpBar"></i></span><br>
@@ -45,10 +46,26 @@
   <small>Puedes cambiarlo después con la tecla V (o el botón 🪁)</small>
 </div>
 <div id="help">
-  <b>ESPACIO / click</b> tirar &nbsp;·&nbsp; <b>A D / ← →</b> dirigir &nbsp;·&nbsp; <b>S / ↓</b> dar hilo &nbsp;·&nbsp; <b>R</b> reiniciar &nbsp;·&nbsp; <b>E</b> cambiar escenario &nbsp;·&nbsp; <b>V</b> cambiar volantín
+  <b>ESPACIO / click</b> tirar &nbsp;·&nbsp; <b>A D / ← →</b> dirigir &nbsp;·&nbsp; <b>S / ↓</b> dar hilo &nbsp;·&nbsp; <b>R</b> reiniciar &nbsp;·&nbsp; <b>E</b> cambiar escenario &nbsp;·&nbsp; <b>V</b> cambiar volantín &nbsp;·&nbsp; <b>M</b> jugar con amigos
   <br>Cruza tu hilo con el de un rival y serrucha (tira o da hilo) para comisionarlo
 </div>
 <div id="msg">¡Tira para elevar el volantín!<small>Mantén ESPACIO o el click</small></div>
+<button id="btnNet" aria-label="Jugar con amigos" title="Jugar con amigos (M)">👥</button>
+<div id="lobby" hidden>
+  <div class="box">
+    <h2>Jugar con amigos</h2>
+    <button id="lobbyHost" class="wide">Crear sala</button>
+    <div class="or">o únete a la sala de un amigo</div>
+    <div class="join">
+      <span>VOLA-</span><input id="lobbyCode" inputmode="numeric" maxlength="4" placeholder="1234" autocomplete="off">
+      <button id="lobbyJoin">Unirse</button>
+    </div>
+    <p id="netStatus"></p>
+    <small>Se conectan directo de navegador a navegador. Cada amigo toma el lugar de un rival de la computadora.
+      Algunas redes (empresas, datos móviles) pueden bloquear la conexión.</small>
+    <button id="lobbyClose" class="link">Cerrar</button>
+  </div>
+</div>
 
 <script type="importmap">
 { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
@@ -64,7 +81,7 @@ import * as THREE from 'three';
 window.THREE = THREE;
 const ARCHIVOS = [
   'js/base.js', 'js/rivales.js', 'js/escenarios.js', 'js/personaje.js', 'js/volantin.js',
-  'js/estado.js', 'js/viento.js', 'js/controles.js', 'js/comision.js', 'js/main.js',
+  'js/estado.js', 'js/viento.js', 'js/controles.js', 'js/comision.js', 'js/red.js', 'js/main.js',
 ];
 for (const src of ARCHIVOS) {
   await new Promise((ok, falla) => {

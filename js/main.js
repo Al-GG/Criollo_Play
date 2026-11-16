@@ -61,7 +61,8 @@ function updateFlyerVisuals(f, dt) {
   // Tamaño parejo en pantalla aunque esté lejos.
   if (f.label) {
     const shown = labelsFrom === null ? 0 : time - labelsFrom;
-    const fade = 1 - THREE.MathUtils.smoothstep(shown, LABEL_TIME, LABEL_TIME + LABEL_FADE);
+    // Los jugadores de verdad (multijugador) mantienen su nombre siempre visible
+    const fade = f.human ? 1 : 1 - THREE.MathUtils.smoothstep(shown, LABEL_TIME, LABEL_TIME + LABEL_FADE);
     f.label.material.opacity = fade;
     f.label.visible = fade > 0 && f.state !== 'crashed';
     const dist = camera.position.distanceTo(f.pos);
@@ -130,7 +131,9 @@ function updateVisuals(dt) {
   const pos = player.pos;
 
   // Cámara
-  const desiredPos = new V3(pos.x * 0.15, 2.5 + pos.y * 0.08, 8 + player.L * 0.08);
+  // Detrás del jugador, desde donde está parado (en multijugador cada uno tiene su lugar)
+  const home = player.rig.root.position;
+  const desiredPos = new V3(home.x + (pos.x - home.x) * 0.15, 2.5 + pos.y * 0.08, home.z + 8 + player.L * 0.08);
   camPos.lerp(desiredPos, Math.min(1, dt * 2));
   const desiredTarget = new V3().lerpVectors(player.anchor, pos, 0.7);
   camTarget.lerp(desiredTarget, Math.min(1, dt * 3));
@@ -201,7 +204,7 @@ function updateVisuals(dt) {
   el('score').textContent = score;
   el('lost').textContent = lost;
   const climbing = rivals.filter(r => r.state === 'flying' && !r.ready).length;
-  const threats = rivals.filter(r => r.mode === 'attack');
+  const threats = flyers.filter(r => r !== player && r.mode === 'attack');
   el('threat').textContent = threats.length ? `⚠️ Te ataca: ${threats.map(r => r.name).join(' y ')}`
     : climbing ? `Rivales subiendo: ${climbing}`
     : 'Rivales arriba, atentos...';
@@ -221,26 +224,28 @@ function loop() {
   const frame = Math.min(clock.getDelta(), 0.05);
 
   // Entradas del jugador
-  const pulling = !pickerOpen && (keys.Space || mouseDown);
+  const pulling = !pickerOpen && !lobbyOpen && (keys.Space || mouseDown);
   if (pulling && !started) { started = true; player.armed = true; showMsg(''); }
   player.pullT = pulling && player.state === 'flying' ? 1 : 0;
   player.releaseT = (keys.KeyS || keys.ArrowDown) && player.state === 'flying' ? 1 : 0;
   player.steerT = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
   if (player.state !== 'flying') player.steerT = 0;
 
+  // Rivales de la computadora (solo en el juego del anfitrión o de un jugador)
   rivals.forEach(r => aiThink(r, frame));
-  flyers.forEach(updateRoll);
+  flyers.forEach(f => { if (!f.remote) updateRoll(f); });
 
   const steps = 4;
   for (let i = 0; i < steps; i++) {
     time += frame / steps;
-    updateWind(time);
-    flyers.forEach(f => stepFlyer(f, frame / steps));
+    if (!netWindIsRemote()) updateWind(time);       // el invitado usa el viento del anfitrión
+    flyers.forEach(f => { if (!f.remote) stepFlyer(f, frame / steps); });   // los de la red llegan ya movidos
   }
   windAt(player.pos.y, wind);
 
+  netUpdate(frame);
   updateVisuals(frame);
-  updateCombat(frame);
+  if (NET.role !== 'guest') updateCombat(frame);   // los cortes los decide el anfitrión
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }

@@ -19,7 +19,8 @@ const player = createFlyer({
 });
 // Reparte los tipos de volantín al azar entre los rivales, sin repetir (con 4 rivales salen los 4 tipos)
 const rivalKiteTypes = [...KITE_KEYS].sort(() => Math.random() - 0.5);
-const rivals = RIVALS.map((r, i) => createFlyer({
+// Como invitado de una sala no hay rivales propios: llegan los del anfitrión por la red
+const rivals = (NET_JOIN_CODE ? [] : RIVALS).map((r, i) => createFlyer({
   name: r.name, at: r.at, style: r.style,
   look: { shirt: r.shirt, cap: r.cap, pants: 0x3a3a48, hair: 0x1f140c },
   kiteColors: r.kite, tailColors: r.tail,

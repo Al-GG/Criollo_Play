@@ -190,7 +190,7 @@ function createFlyer(o) {
   const label = o.isPlayer ? null : makeLabelSprite();
 
   const f = {
-    name: o.name, isPlayer: !!o.isPlayer,
+    name: o.name, isPlayer: !!o.isPlayer, look: o.look,
     styleName: o.style, style: STYLES[o.style],
     kiteColors: o.kiteColors, tailColors: o.tailColors,
     kite: null, tail: [], tailGeo: null, tailLine: null, bows: [],

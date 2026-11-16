@@ -58,6 +58,7 @@ function cutFlyer(victim, by) {
   } else {
     showToast(`${by.name} comisionó a ${victim.name}`);
   }
+  netOnCut(victim, by);   // multijugador: el anfitrión avisa el corte a todos
 }
 
 const contactPt = new V3();

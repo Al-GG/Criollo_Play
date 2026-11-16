@@ -6,9 +6,11 @@
 const keys = {};
 let mouseDown = false;
 addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;   // escribiendo en un campo (código de sala): no mover el volantín
   keys[e.code] = true;
   if (e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyR') { resetFlyer(player); showMsg(''); }
+  if (e.code === 'KeyM') openLobby();
   if (e.code === 'KeyE') nextBiome();
   if (e.code === 'KeyV' && PLAYER_CAN_PICK) openPicker();
   if (pickerOpen && /^Digit[1-9]$/.test(e.code)) {
@@ -107,6 +109,7 @@ else labelsFrom = 0;
 
 // Escenario: nombre en el HUD, aviso al empezar, y cambio al siguiente (recarga la página con ?escenario=...)
 function nextBiome() {
+  if (NET.role) { showToast('En una sala no se puede cambiar el escenario'); return; }
   const next = BIOME_KEYS[(BIOME_KEYS.indexOf(BIOME_KEY) + 1) % BIOME_KEYS.length];
   try { localStorage.setItem('volantines.ultimoEscenario', next); } catch (e) {}
   location.search = '?escenario=' + next;
