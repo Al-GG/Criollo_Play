@@ -1,7 +1,13 @@
 # Volantines
 
 Juego 3D de elevar volantines hecho con three.js (cargado por CDN con importmap, sin build ni npm).
-Todo el juego vive en `index.html`.
+
+## Estructura
+- `index.html`: HUD, botones y el cargador. Un módulo importa three.js, lo deja en `window.THREE` y carga los scripts de `js/` **en orden**.
+- `js/*.js` son **scripts clásicos (no módulos)** que comparten variables globales; así el juego se abre con doble click, sin servidor. El orden de carga importa: un archivo solo puede usar al cargar lo definido en archivos anteriores (en tiempo de juego todo está disponible).
+- Orden: `base` (atajos) → `rivales` (personalidades, grupo, IA) → `escenarios` (renderer, biomas, cielo, terreno, ambiente) → `personaje` → `volantin` (tipos, forma, física, giros) → `estado` (variables compartidas, crea jugador y rivales) → `viento` → `controles` (teclado/táctil, selector) → `comision` (cruce de hilos, cola, hilo) → `main` (dibujo por cuadro y ciclo `loop()`).
+- `css/estilos.css`: estilos.
+- No declarar globales con nombres reservados del navegador (`top`, `name`, `status`, etc.) ni repetir nombres entre archivos.
 
 ## Reglas
 - Textos del juego y comentarios en español (chileno).
@@ -23,4 +29,4 @@ Todo el juego vive en `index.html`.
 ## Probar
 - PC: abrir `index.html` en el navegador (necesita internet por el CDN).
 - Celular: `npx serve` o `python -m http.server 8000` en esta carpeta y entrar por la IP local del PC.
-- Prueba automática (Claude): Firefox headless (`firefox.exe -headless -no-remote -profile <dir> -screenshot out.png file:///...`, requiere ejecutar fuera del sandbox). Para ver la escena 3D: copia de prueba con `preserveDrawingBuffer: true`, simular N cuadros con `loop()` y volcar `renderer.domElement.toDataURL()` a un `<img>`.
+- Prueba automática (Claude): Firefox headless (`firefox.exe -headless -no-remote -profile <dir> -screenshot out.png file:///...`, requiere ejecutar fuera del sandbox). Para ver la escena 3D: copiar el proyecto, poner `preserveDrawingBuffer: true` en `js/escenarios.js`, simular N cuadros con `loop()` en `js/main.js` y volcar `renderer.domElement.toDataURL()` a un `<img>`.
