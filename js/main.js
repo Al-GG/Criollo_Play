@@ -249,10 +249,13 @@ function loop() {
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
-loop();
-
-addEventListener('resize', () => {
+// Ajusta cámara y lienzo al tamaño de la ventana. Se llama también al arrancar: si la ventana cambió
+// de tamaño mientras cargaba (pasa en celulares con la barra de direcciones), la imagen no queda deformada.
+function ajustarTamano() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
-});
+}
+addEventListener('resize', ajustarTamano);
+ajustarTamano();
+loop();
