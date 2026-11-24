@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Volantín dieciochero: colores de la bandera chilena, con estrella, varillas y cola con amarras -->
+  <path d="M32 52 q-6 4 -2 7 q4 3 10 1" fill="none" stroke="#333" stroke-width="1.6"/>
+  <path d="M27 54 l3 2 l-3 2 z M35 58 l3 -1 l-1 3 z" fill="#d52b1e"/>
+  <path d="M29 56 l2.5 2 l-3 1.5 z" fill="#0039a6"/>
+  <polygon points="32,3 8,26 32,26" fill="#0039a6"/>
+  <polygon points="32,3 56,26 32,26" fill="#ffffff"/>
+  <polygon points="8,26 56,26 32,52" fill="#d52b1e"/>
+  <polygon fill="#ffffff" points="23,14.5 24.06,17.54 27.28,17.61 24.71,19.56 25.65,22.64 23,20.8 20.35,22.64 21.29,19.56 18.72,17.61 21.94,17.54"/>
+  <path d="M32 3 V52 M8 26 Q32 18 56 26" fill="none" stroke="#5a3d1e" stroke-width="1.2"/>
+  <polygon points="32,3 56,26 32,52 8,26" fill="none" stroke="#222" stroke-width="2" stroke-linejoin="round"/>
+</svg>

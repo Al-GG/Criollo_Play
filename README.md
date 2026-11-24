@@ -1,6 +1,6 @@
-# Volantines 🪁
+# Volantines · Criollo Play 🪁
 
-Juego 3D para elevar volantines y competir en una comisión, como en las Fiestas Patrias chilenas. Corre directo en el navegador, en PC y en celular.
+Primer juego de **Criollo Play**, plataforma de juegos tradicionales chilenos (trabajo universitario, 3 juegos). Juego 3D para elevar volantines y competir en una comisión, como en las Fiestas Patrias chilenas. Corre directo en el navegador, en PC y en celular.
 
 **Jugar en línea:** https://TU-USUARIO.github.io/volantines/
 
@@ -43,6 +43,7 @@ Todos los controles responden con una rampa suave, así que el volantín nunca r
 
 ```
 index.html        HUD, botones y cargador de scripts
+img/volantin.svg  ícono y logo (volantín dieciochero)
 css/estilos.css   estilos
 js/
   lib/three.js    three.js (copia local)

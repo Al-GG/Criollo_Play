@@ -1,12 +1,14 @@
 # Volantines
 
 Juego 3D de elevar volantines hecho con three.js (copia local en `js/lib/three.js`, sin build ni npm). Funciona sin internet, salvo el multijugador.
+Es el primer juego de **Criollo Play** (plataforma de 3 juegos criollos, trabajo universitario): título de la ventana "Volantines · Criollo Play" y logo en pantalla (`#brand`, y grande en el selector).
 
 ## Estructura
 - `index.html`: HUD, botones y el cargador. El cargador trae `js/lib/three.js` (deja `window.THREE`) y luego los scripts de `js/` **en orden**.
 - `js/*.js` son **scripts clásicos (no módulos)** que comparten variables globales; así el juego se abre con doble click, sin servidor. El orden de carga importa: un archivo solo puede usar al cargar lo definido en archivos anteriores (en tiempo de juego todo está disponible).
 - Orden: `base` (atajos) → `rivales` (personalidades, grupo, IA) → `escenarios` (renderer, biomas, cielo, terreno, ambiente) → `personaje` → `volantin` (tipos, forma, física, giros) → `estado` (variables compartidas, crea jugador y rivales) → `viento` → `controles` (teclado/táctil, selector) → `comision` (cruce de hilos, cola, hilo) → `red` (multijugador) → `main` (dibujo por cuadro y ciclo `loop()`).
 - `css/estilos.css`: estilos.
+- `img/volantin.svg`: volantín dieciochero, ícono de la pestaña y logo de Criollo Play.
 - No declarar globales con nombres reservados del navegador (`top`, `name`, `status`, etc.) ni repetir nombres entre archivos.
 
 ## Reglas
