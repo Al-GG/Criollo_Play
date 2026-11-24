@@ -2,7 +2,7 @@
 
 Primer juego de **Criollo Play**, plataforma de juegos tradicionales chilenos (trabajo universitario, 3 juegos). Juego 3D para elevar volantines y competir en una comisión, como en las Fiestas Patrias chilenas. Corre directo en el navegador, en PC y en celular.
 
-**Jugar en línea:** https://TU-USUARIO.github.io/volantines/
+**Jugar en línea:** https://al-gg.github.io/Criollo_Play/
 
 ## De qué se trata
 
