@@ -71,31 +71,32 @@
   </div>
 </div>
 
-<script type="importmap">
-{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
-</script>
-
 <!--
-  Carga del juego: este módulo trae three.js y después carga los scripts de js/ en orden.
+  Carga del juego: primero three.js (copia local en js/lib, así funciona sin internet) y después los scripts de js/ en orden.
   Son scripts clásicos (no módulos) para que el juego se pueda abrir con doble click, sin servidor.
   Comparten sus variables globales, así que el ORDEN importa: cada archivo puede usar lo de los anteriores.
 -->
-<script type="module">
-import * as THREE from 'three';
-window.THREE = THREE;
-const ARCHIVOS = [
-  'js/base.js', 'js/rivales.js', 'js/escenarios.js', 'js/personaje.js', 'js/volantin.js',
-  'js/estado.js', 'js/viento.js', 'js/controles.js', 'js/comision.js', 'js/red.js', 'js/main.js',
-];
-for (const src of ARCHIVOS) {
-  await new Promise((ok, falla) => {
+<script>
+(function () {
+  const ARCHIVOS = [
+    'js/lib/three.js',
+    'js/base.js', 'js/rivales.js', 'js/escenarios.js', 'js/personaje.js', 'js/volantin.js',
+    'js/estado.js', 'js/viento.js', 'js/controles.js', 'js/comision.js', 'js/red.js', 'js/main.js',
+  ];
+  let i = 0;
+  function siguiente() {
+    if (i >= ARCHIVOS.length) return;
     const s = document.createElement('script');
-    s.src = src;
-    s.onload = ok;
-    s.onerror = () => falla(new Error('No se pudo cargar ' + src));
+    s.src = ARCHIVOS[i++];
+    s.onload = siguiente;
+    s.onerror = () => {
+      const m = document.getElementById('msg');
+      if (m) m.innerHTML = 'No se pudo cargar el juego<small>Falta el archivo ' + s.src.split('/').slice(-2).join('/') + '</small>';
+    };
     document.body.appendChild(s);
-  });
-}
+  }
+  siguiente();
+})();
 </script>
 </body>
 </html>
